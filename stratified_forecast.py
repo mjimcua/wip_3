@@ -1649,15 +1649,22 @@ class StratifiedForecastHito1:
         la clave completa dim=valor — para revisar en 3 líneas si una variable
         concreta no está calculada a futuro y corta la continuidad de esos
         productos. Solo informa; el framework las cubre heredando del grupo."""
-        self._require("step_2_report_only_projection_top", ["step_2_build_support"])
+        self._require("step_2_report_only_projection_top", ["step_1_derive_roles_from_period"])
         cfg, df = self.cfg, self.df
         rc = cfg.dataset_role_col
+        # id de serie AL VUELO (no requiere build_identity): basta el group-by
+        # por dimensiones. Si fs_id ya existe persistido, se reutiliza.
+        if "step_2_fs_id" in df.columns and df["step_2_fs_id"].notna().any():
+            key = df["step_2_fs_id"]
+        else:
+            key = df[self.dimension_cols].astype(str).agg("|".join, axis=1)
+        df = df.assign(_fsk=key)
         real = (df[df.get("step_1_synthetic", 0).fillna(0).astype(int) == 0]
                 if "step_1_synthetic" in df.columns else df)
         con_hist = set(real[real[rc].isin(("train", "test"))
-                            & (real[cfg.pipeline_units_col] > 0)]["step_2_fs_id"])
-        prj = df[(df[rc] == "projection") & df["step_2_fs_id"].notna()]
-        usd = prj.groupby("step_2_fs_id")[cfg.pipeline_usd_col].sum()
+                            & (real[cfg.pipeline_units_col] > 0)]["_fsk"])
+        prj = df[(df[rc] == "projection") & df["_fsk"].notna()]
+        usd = prj.groupby("_fsk")[cfg.pipeline_usd_col].sum()
         solo = usd[~usd.index.isin(con_hist)].sort_values(ascending=False)
         total = max(usd.sum(), 1)
         n_series = int(len(solo))
@@ -1667,8 +1674,8 @@ class StratifiedForecastHito1:
             self._log(f"    forecast series SOLO-projection: {n_series:,} "
                       f"({100*solo.sum()/total:.1f}% del $ a predecir)")
             self._log(f"    TOP {top} por $ (revisar si falta una variable a futuro):")
-            ej = (prj[prj["step_2_fs_id"].isin(solo.head(top).index)]
-                  .drop_duplicates("step_2_fs_id").set_index("step_2_fs_id"))
+            ej = (prj[prj["_fsk"].isin(solo.head(top).index)]
+                  .drop_duplicates("_fsk").set_index("_fsk"))
             for fsid in solo.head(top).index:
                 clave = " | ".join(f"{d}={ej.loc[fsid, d]}" for d in self.dimension_cols) \
                     if fsid in ej.index else str(fsid)
@@ -4706,6 +4713,7 @@ def run_hito_1(config, df_raw=None) -> StratifiedForecastHito1:
     sf.step_1_normalize_period()
     sf.step_1_collapse_covariates()               # covariables → vista FU interna (fina en df_fine)
     sf.step_1_derive_roles_from_period()  # audita roles del raw; con el flag, los deriva del periodo
+    sf.step_2_report_only_projection_top()  # cobertura: $ solo en projection (id al vuelo)
     sf.step_1_add_universe()
     sf.step_1_add_coverage_pattern()
     sf.step_1_add_forecast_route()
@@ -4725,7 +4733,6 @@ def run_hito_1(config, df_raw=None) -> StratifiedForecastHito1:
     sf.step_2_report_density_money()       # VALORACIÓN 2 (dinero): densidad × usd_proj
     sf.step_2_report_gap_density_money()
     sf.step_2_report_no_training_top()
-    sf.step_2_report_only_projection_top()           # dinero por densidad de huecos (intermitencia)
     sf.step_2_report_support_profile()   # COMPOSICIÓN: sano / ralo-rescatable / ralo-solitaria
     sf.step_2_report_history_length()      # TOPOLOGÍA: eje longitud (ortogonal a densidad)
     # FASE B1 — comparar agregación mandatory (gruesa) vs grano fino
