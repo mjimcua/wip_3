@@ -298,8 +298,8 @@ GLOSARIO = {
 }
 
 STEP_META = {
- "step_1_report_density": {"ref": "§1.11", "preg": "¿Qué calidad de MUESTRA tienen las FU/FS?", "defs": ["FU","FS","soporte"], "crit": "soporte<30=ruidoso; ≥100=utilizable; mediana del portfolio como termómetro."},
- "step_2_report_gap_density_money": {"ref": "§1.21", "preg": "¿Cuánto DINERO vive en series intermitentes?", "defs": ["FS"], "crit": "huecos=ceros legítimos (contrato vigente); preocupa solo si cargan $ material."},
+ "step_1_report_density": {"ref": "§1.12", "preg": "¿Qué calidad de MUESTRA tienen las FU/FS?", "defs": ["FU","FS","soporte"], "crit": "soporte<30=ruidoso; ≥100=utilizable; mediana del portfolio como termómetro."},
+ "step_2_report_gap_density_money": {"ref": "§1.22", "preg": "¿Cuánto DINERO vive en series intermitentes?", "defs": ["FS"], "crit": "huecos=ceros legítimos (contrato vigente); preocupa solo si cargan $ material."},
  "step_3_classify_small_series": dict(ref="", preg="¿Cuántas series pequeñas hay y cuánto $ son: fusionables, encogibles o polvo?", defs=["FS", "soporte"], crit="3 destinos de GESTIÓN, no 3 métodos: fusionable (subir grano si hay dim sin señal), encogible (evidence weight ya resuelve), polvo (heredar y reportar agregado). El nº de series es incomodidad; el $ es lo que decide.", formula="fusionable: dust<=sop<small Y existe dim anulable; polvo: sop<dust Y padre<mediana; resto encogible"),
  "step_3_collapse_anova": dict(ref="", preg="¿Ganamos soporte colapsando la dimensión no-mandatory que no separa la tasa?", defs=["FS","eta2","soporte"], crit="NIVEL 2 del árbol: ejecuta lo que el ANOVA informaba. Colapsa con '*' la dim no-mandatory de menor η² para las series aún pobres. No toca geografía/producto.", formula="drop_dim = argmin η² entre no-mandatory con η²<eta_low; '*' en su posición si soporte<floor"),
  "step_3_anova_rate": {"ref": "§1.29", "preg": "¿Qué dimensiones SEPARAN la tasa (no colapsar)?", "defs": ["eta2"], "crit": "η²≥0.10 separa; 0.03–0.10 intermedia; <0.03 anulable si además fragmenta."},
@@ -310,7 +310,10 @@ STEP_META = {
  "step_h2_reassess_support": dict(ref="", preg="Tras el colapso, ¿cuánto $ tiene tasa propia, cuánto hereda y cuánto es heurística?", defs=["soporte","FS"], crit="PASO A del cierre: re-evalúa soporte del grupo colapsado y etiqueta estado_final.", formula="RESUELTA si soporte_grupo>=floor; HEURISTICA si <dust o sin train; resto EVIDENCE_WEIGHT"),
  "step_h2_improvement_summary": dict(ref="", preg="¿Qué soporte hemos ganado con el colapso (antes/después)?", defs=["soporte"], crit="PASO B: compara grano fino vs colapsado en las varas del HITO 1.", formula="soporte mediano y %$ bajo soporte<100, fino vs grupo"),
  "step_h2_quality_photo": {"ref": "§2.7", "preg": "¿Qué calidad tienen las series ANTES (mandatory) vs DESPUÉS (framework)?", "defs": ["soporte","z (evidence weight)"], "crit": "el fino fragmenta; la credibilidad devuelve el error presupuestado a escala."},
- "step_h2_forecast_bands": dict(ref="", preg="¿Cuál es el forecast 2026 y su banda de confianza?", defs=["WAPE", "z (evidence weight)"], crit="banda anclada en el error REAL del backtest (no inventada); suelo binomial irreducible por serie; asimétrica donde hay tendencia reciente. Declarada como cuantificación honesta, no IC frecuentista exacto.", formula="half = z·max(WAPE·pred, raíz(Σ SE_usd²)); lo/hi escalados por 1+trend_skew·|pendiente| en el lado correspondiente"),
+ "step_h2_forecast_bands": dict(ref="", preg="¿Cuál es el forecast 2026, la banda POR SERIE y las dos bandas del total?", defs=["WAPE", "z (evidence weight)"], crit="banda por serie = cuadratura de errores relativos (tasa: max binomial vs WAPE; uplift; AUV). Asimetría según si el método modela tendencia (sin tendencia→abre hacia la pendiente; con tendencia→abre en contra por techo natural). DOS totales: suma de extremos (cartera coherente) y cuadratura (independientes); ambas con límites declarados. Ninguna es IC frecuentista exacto.", formula="(σrev/rev)²=(σtasa/tasa)²+(σuplift/uplift)²+(σauv/auv)²; total cuadratura=raíz(Σσ²); total coherente=Σlo…Σhi"),
+ "step_h2_total_2026": dict(ref="", preg="¿Cuánto cerraría 2026 sumando lo ya renovado y lo proyectado?", defs=[], crit="REAL (train+test 2026) + PROYECTADO (projection × AUV × uplift). Magnitud del año.", formula="total = Σ renovado_usd 2026 observado + Σ pred_shrunk × AUV × uplift de projection 2026"),
+ "step_3_report_recent_slope": dict(ref="", preg="¿Qué forecast series tienen más tendencia reciente (a vigilar en projection)?", defs=["FS"], crit="pendiente de la tasa en los últimos meses × $ de projection; para evaluación gráfica.", formula="pendiente pp/año por regresión ponderada en ventana reciente; ranking |pendiente|×$"),
+ "step_3_report_top_trend": dict(ref="", preg="¿Qué series cambian más su tasa en el histórico?", defs=["FS"], crit="tendencia histórica; informa.", formula="cambio de tasa en ventana"),
  "step_h2_assemble_2027": dict(ref="", preg="¿Cuánto saldrá el año completo siguiente y cuánto aporta cada parte?", defs=[], crit="C1 multi-año ya firmado (firme) + C2 re-renovación 1Y + C3 adquisición 1Y (ambas simuladas, banda ancha); total = C1+C2+C3.", formula="C1 = pred_shrunk×AUV×uplift de projection 2Y/3Y del año objetivo; C2/C3 = pred_usd de extend_AB partido por share de A vs B"),
  "step_h2_backtest_test_months": {"ref": "§2.8", "preg": "¿Cuánto MEJORA cada bloque de variables, en $ reales?", "defs": ["WAPE"], "crit": "escalonado M1→M4 sobre test reservado; gana el WAPE $ mínimo (validación out-of-sample pendiente, ver doc)."},
 }
@@ -318,10 +321,10 @@ STEP_META = {
 
 for _k, _v in {
  "step_2_report_only_projection_top": dict(ref="", preg="¿Qué forecast series viven SOLO en projection (heurística pura) y cuáles son las 3 de más $?", defs=["FS"], crit="ni train ni test en todo el histórico → no hay nada que aprender; top 3 con clave completa para revisar si falta una variable a futuro. Solo informa.", formula="solo-projection = FS con pipeline>0 en projection y 0 en train+test"),
- "step_2_report_no_training_top": dict(ref="§1.22", preg="¿Qué dinero hay que predecir SIN ninguna evidencia de entrenamiento?", defs=["FS"], crit="en un negocio continuo es ANÓMALO: revisar en origen (migración entre celdas por dims time-varying, producto nuevo, clave mal informada). El framework las cubre con la tasa del grupo (z=0), pero la revisión manda.", formula="sin train = 0 meses reales con pipeline>0 en rol train; ranking por $ de projection"),
+ "step_2_report_no_training_top": dict(ref="§1.23", preg="¿Qué dinero hay que predecir SIN ninguna evidencia de entrenamiento?", defs=["FS"], crit="en un negocio continuo es ANÓMALO: revisar en origen (migración entre celdas por dims time-varying, producto nuevo, clave mal informada). El framework las cubre con la tasa del grupo (z=0), pero la revisión manda.", formula="sin train = 0 meses reales con pipeline>0 en rol train; ranking por $ de projection"),
  "step_2_report_support_profile": dict(ref="", preg="¿Cómo es la materia prima por tramos de soporte y cuánto error arrastramos solo por tamaño?", defs=["FS", "soporte"], crit="describe sin predecir; el error binomial (±z·√(p(1−p)/n)) es el error irreducible por muestra → motiva el HITO 2.", formula="error_pp = 1.96·√(0.5·0.5/n)·100 (p=0,5 peor caso, 95%)"),
  "step_2_collapse_signal_support": dict(ref="", preg="¿Ganamos soporte uniendo las series de señal negativa (o positiva) del mismo grupo?", defs=["FS", "soporte"], crit="NIVEL 1 del árbol de colapso: une por signo (concatena señales activas, conserva traza) solo si soporte bajo; un movimiento a prueba, mide antes/después.", formula="candidata = señal activa Y soporte_FS < floor; grupo = concat(señales activas) + resto de dims iguales"),
- "step_2_report_density_money": dict(ref="§1.20", preg="¿Cuánto dinero vive en cada nivel de soporte y cómo de concentrado está?", defs=["FS", "soporte"], crit="tabla CANÓNICA por cortes 30/100/200/500 (la foto del HITO 2 compara antes/después con estos mismos cortes); esperado Gini alto (0,8-0,95). El Gini SOLO INFORMA: no condiciona ningún cálculo; decide dónde va la atención HUMANA (cabeza auditable serie a serie vs cola industrial) y es referencia comparativa entre granos y entre pasadas (si cambia mucho, la forma del dinero cambió: revisar)."),
+ "step_2_report_density_money": dict(ref="§1.21", preg="¿Cuánto dinero vive en cada nivel de soporte y cómo de concentrado está?", defs=["FS", "soporte"], crit="tabla CANÓNICA por cortes 30/100/200/500 (la foto del HITO 2 compara antes/después con estos mismos cortes); esperado Gini alto (0,8-0,95). El Gini SOLO INFORMA: no condiciona ningún cálculo; decide dónde va la atención HUMANA (cabeza auditable serie a serie vs cola industrial) y es referencia comparativa entre granos y entre pasadas (si cambia mucho, la forma del dinero cambió: revisar)."),
  "step_2_report_history_length": dict(ref="§1.25", preg="¿Cuánta historia tiene cada serie y cuánto $ puede optar a la técnica de serie temporal?", defs=["FS"], crit="<12m: sin ciclo estacional observable; >=18m: elegible para EWM (HITO 2)."),
 }.items():
     STEP_META.setdefault(_k, {}).update(_v)
@@ -665,8 +668,21 @@ class StratifiedForecastHito1:
         agg = {c: "sum" for c in sumcols} | {c: "first" for c in otras}
         chk = fine.groupby(keys, observed=True)[rc].nunique()
         if (chk > 1).any():
-            self._log(f"    ⚠ {int((chk > 1).sum())} grupos (FU,mes) con roles "
+            n_mix = int((chk > 1).sum())
+            self._log(f"    ⚠ {n_mix} grupos (FU,mes) con roles "
                       f"mezclados en el raw; se toma el primero.")
+            # DUMP de los 10 primeros para inspección manual (clave + roles)
+            mixed_keys = chk[chk > 1].head(10).index
+            self._log(f"      primeros 10 (clave | mes | roles presentes | filas):")
+            for k in mixed_keys:
+                kd = dict(zip(keys, k if isinstance(k, tuple) else (k,)))
+                sub = fine
+                for col, val in kd.items():
+                    sub = sub[sub[col] == val]
+                roles_aqui = sub[rc].value_counts().to_dict()
+                clave_dims = " | ".join(f"{c}={kd[c]}" for c in dc)
+                mes = kd.get(pc, "?")
+                self._log(f"        {clave_dims} | {mes} | {roles_aqui}")
         vista = fine.groupby(keys, observed=True, as_index=False).agg(agg)
         # AUVs recalculadas del agregado (coherencia: Σusd/Σunits)
         pares = [(cfg.pipeline_usd_col, cfg.pipeline_units_col, "TR_AUV"),
@@ -1588,6 +1604,19 @@ class StratifiedForecastHito1:
             df["step_2_grupo_colapso"] = "no_agrupa"
             df["step_2_fs_id_L1"] = df.get("step_2_fs_id")
             self.df = df
+            # diagnóstico: ¿por qué no aplica? ayuda a detectar config mal pasado
+            declaradas = list(tv.keys())
+            candidatas = [c for c in ("dormant", "softcancel", "churn", "cancel")
+                          if c in df.columns and c not in declaradas]
+            if declaradas:
+                self._log(f"    dims declaradas {declaradas} NO están en el df "
+                          f"(columnas: revisa nombres).")
+            else:
+                self._log(f"    structural_timevarying_dims VACÍO en config.")
+            if candidatas:
+                self._log(f"    ⚠ HAY columnas que parecen señales y NO están "
+                          f"declaradas: {candidatas}. Decláralas en Step1Config "
+                          f"(structural_timevarying_dims) para activar el COLAPSO N1.")
             self._mark("step_2_collapse_signal_support")
             self._done("step_2_collapse_signal_support",
                        "sin dims time-varying declaradas: no aplica")
@@ -4134,6 +4163,99 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         return df[m]
 
     # ---------- pasos ----------
+    def step_3_report_recent_slope(self, window=6, top=10, min_pp_year=10.0):
+        """RIESGO DE TENDENCIA RECIENTE: identifica las forecast series cuya
+        tasa muestra MÁS pendiente en los últimos `window` meses reales de
+        train (regresión ponderada por soporte, en pp/año), ranking por
+        |pendiente| × $ en projection. El método elegido minimiza el error
+        medido, pero en estas series el futuro puede separarse del nivel de
+        hoy: son las primeras a visualizar y explicar a negocio. Bandas
+        asimétricas bajo tendencia: DISEÑADAS en CAP5, pendientes de código."""
+        self._require("step_3_report_recent_slope", ["step_2_build_identity"])
+        cfg = self.cfg
+        pc, pu, ru = cfg.period_col, cfg.pipeline_units_col, cfg.renewed_units_col
+        d = self.df
+        tr = d[(d[cfg.dataset_role_col] == "train")
+               & (d.get("step_1_synthetic", 0).fillna(0).astype(int) == 0)
+               & (d[pu] > 0)]
+        ult = sorted(tr[pc].unique())[-window:]
+        w6 = tr[tr[pc].isin(ult)].copy()
+        w6["_r"] = w6[ru]/w6[pu]
+        w6["_x"] = w6[pc].map({p: i for i, p in enumerate(ult)})
+        prj = d[d[cfg.dataset_role_col] == "projection"]
+        usd = prj.groupby("step_2_fs_id")[cfg.pipeline_usd_col].sum()
+        rows = []
+        for fs, g in w6.groupby("step_2_fs_id"):
+            if g[pc].nunique() < 4:
+                continue
+            b = np.polyfit(g["_x"], g["_r"], 1, w=np.sqrt(g[pu]))[0]
+            rows.append((fs, b*12*100, g.sort_values(pc)["_r"].iloc[0]*100,
+                         g.sort_values(pc)["_r"].iloc[-1]*100, usd.get(fs, 0.0)))
+        t = pd.DataFrame(rows, columns=["fs", "pp_año", "tasa_ini", "tasa_fin",
+                                        "usd_projection"]).set_index("fs")
+        t["riesgo_$"] = t["pp_año"].abs()*t["usd_projection"]
+        t = t.sort_values("riesgo_$", ascending=False)
+        self.recent_slope = t
+        n_flag = int((t["pp_año"].abs() >= min_pp_year).sum())
+        self._table(t.head(top).round(1),
+                    f"TOP series por pendiente reciente × dinero (ventana {window}m):",
+                    col_defs={"pp_año": f"pendiente de la tasa en los últimos {window} meses, anualizada (puntos %/año)",
+                              "tasa_ini/fin": "tasa al inicio y final de la ventana, %",
+                              "usd_projection": "$ de pipeline a predecir en esa serie",
+                              "riesgo_$": "|pendiente| × $: prioridad de explicación a negocio"})
+        self._mark("step_3_report_recent_slope")
+        self._done("step_3_report_recent_slope",
+                   f"{n_flag} series con |pendiente reciente| ≥ {min_pp_year:.0f} pp/año")
+
+    def step_3_report_top_trend(self, window=6, top=10) -> dict:
+        """TOP series por TENDENCIA pura (para VISUALIZAR), separadas en las
+        `top` de mayor pendiente POSITIVA y las `top` de mayor pendiente
+        NEGATIVA en los últimos `window` meses reales (regresión de la tasa
+        ponderada por soporte, pp/año). A diferencia de recent_slope (que
+        rankea por |pendiente|×$ = riesgo económico), aquí el orden es la
+        pendiente pura: son las series cuya FORMA hay que mirar y explicar."""
+        self._require("step_3_report_top_trend", ["step_2_build_identity"])
+        cfg, df = self.cfg, self.df
+        pc, pu, ru = cfg.period_col, cfg.pipeline_units_col, cfg.renewed_units_col
+        tr = df[(df[cfg.dataset_role_col] == "train")
+                & (df.get("step_1_synthetic", 0).fillna(0).astype(int) == 0)
+                & (df[pu] > 0)]
+        ult = sorted(tr[pc].unique())[-window:]
+        w = tr[tr[pc].isin(ult)].copy()
+        w["_r"] = w[ru]/w[pu]
+        w["_x"] = w[pc].map({p: i for i, p in enumerate(ult)})
+        usd = (df[df[cfg.dataset_role_col] == "projection"]
+               .groupby("step_2_fs_id")[cfg.pipeline_usd_col].sum())
+        rows = []
+        for fs, g in w.groupby("step_2_fs_id"):
+            if g[pc].nunique() < 4:
+                continue
+            b = np.polyfit(g["_x"], g["_r"], 1, w=np.sqrt(g[pu]))[0]
+            s = g.sort_values(pc)
+            rows.append((fs, b*12*100, s["_r"].iloc[0]*100, s["_r"].iloc[-1]*100,
+                         float(usd.get(fs, 0.0))))
+        t = pd.DataFrame(rows, columns=["fs", "pp_año", "tasa_ini", "tasa_fin",
+                                        "usd_proj"]).set_index("fs")
+        if len(t) == 0:
+            self._mark("step_3_report_top_trend", metadata={"empty": True})
+            self._done("step_3_report_top_trend", "sin series con historia suficiente")
+            return {}
+        defs = {"pp_año": f"pendiente de la tasa en los últimos {window}m, anualizada (puntos %/año)",
+                "tasa_ini/fin": "tasa al inicio y final de la ventana, %",
+                "usd_proj": "$ a predecir en la serie (contexto, no es el orden)"}
+        subo = t.sort_values("pp_año", ascending=False).head(top)
+        bajo = t.sort_values("pp_año").head(top)
+        self._table(subo.round(1), f"TOP {top} series por tendencia POSITIVA (a visualizar):", col_defs=defs)
+        self._table(bajo.round(1), f"TOP {top} series por tendencia NEGATIVA (a visualizar):", col_defs=defs)
+        self.top_trend = {"up": subo, "down": bajo}
+        self._mark("step_3_report_top_trend",
+                   metadata={"max_up": float(subo["pp_año"].max()),
+                             "max_down": float(bajo["pp_año"].min())})
+        self._done("step_3_report_top_trend",
+                   f"top {top} ↑ (hasta {subo['pp_año'].max():+.0f} pp/año) "
+                   f"y ↓ (hasta {bajo['pp_año'].min():+.0f} pp/año) listadas")
+        return {"up": subo, "down": bajo}
+
     def step_h2_fit_baseline_mandatory(self) -> None:
         """Método ANTES (tradicional): tasa promedio plana por celda MANDATORY
         sobre train (Σ renovadas / Σ pipeline del agregado de la celda)."""
@@ -4171,7 +4293,24 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
             "_mk": g["_mk"].first(),
         })
         fs["rate_fs"] = np.where(fs["n"] > 0, fs["ren"] / fs["n"], np.nan)
-        fs["rate_parent"] = fs["_mk"].map(self.h2_mandatory["rate"])
+        # PADRE = grupo del ÁRBOL DE COLAPSO (fs_group tras N1/N2), no el mandatory
+        # crudo. Una serie pobre hereda de su grupo HOMOGÉNEO (p.ej. negativos de
+        # su región×producto), no del mandatory entero. Fallback al mandatory si
+        # el árbol no agrupó esa serie.
+        gcol = ("step_2_fs_id_L2" if "step_2_fs_id_L2" in self.df.columns else
+                "step_2_fs_id_L1" if "step_2_fs_id_L1" in self.df.columns else None)
+        rate_mand = fs["_mk"].map(self.h2_mandatory["rate"])
+        if gcol is not None:
+            # tasa del grupo del árbol: Σren/Σn de la historia real por fs_group
+            hist_g = self._real_hist(cfg.history_roles)
+            map_grp = self.df[["step_2_fs_id", gcol]].drop_duplicates().set_index("step_2_fs_id")[gcol]
+            hist_g = hist_g.assign(_g=hist_g["step_2_fs_id"].map(map_grp))
+            grp_rate = (hist_g.groupby("_g")[cfg.renewed_units_col].sum()
+                        / hist_g.groupby("_g")[cfg.pipeline_units_col].sum().replace(0, np.nan))
+            fs_grp = fs.index.to_series().map(map_grp)
+            fs["rate_parent"] = fs_grp.map(grp_rate).fillna(rate_mand)
+        else:
+            fs["rate_parent"] = rate_mand
         # k por momentos: E[p(1-p)] / Var_entre(p) ponderado
         ok = fs["n"] >= 5
         p = fs.loc[ok, "rate_fs"].clip(0.001, 0.999)
@@ -4472,20 +4611,81 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         self._done("step_h2_forecast_projection", "predicciones escritas en el df")
 
 
-    def step_h2_forecast_bands(self, z_score=1.96, trend_skew=0.5) -> dict:
-        """BANDA DE CONFIANZA del forecast 2026 (projection), por celda
-        mandatory y total. Tres ingredientes, todos declarados:
-          1) ERROR RELATIVO empírico = WAPE en $ del método ganador del
-             backtest (error ya demostrado fuera de muestra en el test).
-          2) SUELO binomial por serie: aunque el backtest fuese perfecto,
-             una tasa p sobre n unidades tiene error de muestreo irreducible
-             SE=raíz(p(1-p)/n); se agrega en $ por celda.
-          3) ASIMETRÍA por tendencia: en celdas con pendiente reciente, el
-             lado 'contra' la pendiente se ensancha trend_skew·|pendiente|
-             (una serie que sube puede quedarse corta más que larga).
-        Banda = pred ± z·error, con los dos lados escalados por la asimetría.
-        NO es una banda frecuentista exacta: es una cuantificación honesta de
-        incertidumbre para comunicar a negocio (declarado)."""
+    def step_h2_total_2026(self) -> dict:
+        """NÚMERO FINAL 2026 = REAL (lo ya renovado en train+test de 2026) +
+        PROYECTADO (projection con el método elegido × AUV × uplift). Da el
+        total del año para hacerse una idea de la magnitud, separando lo que
+        ya ocurrió de lo que se estima."""
+        self._require("step_h2_total_2026", ["step_h2_forecast_projection"])
+        cfg, df = self.cfg, self.df
+        pc, rc = cfg.period_col, cfg.dataset_role_col
+        year = self._target_year() if hasattr(self, "_target_year") else 2026
+        # REAL 2026: USD renovado observado en meses de 2026 que NO son projection
+        en_2026 = df[pc].apply(lambda p: pd.notna(p) and p.year == year)
+        real_mask = en_2026 & df[rc].isin(cfg.history_roles)
+        real_usd = float(df.loc[real_mask, cfg.renewed_usd_col].sum())
+        meses_real = sorted(df.loc[real_mask, pc].astype(str).unique())
+        # PROYECTADO 2026: projection de 2026, unidades shrunk × AUV × uplift
+        prj_mask = en_2026 & (df[rc] == "projection")
+        prj = df[prj_mask].copy()
+        auv = np.where(prj[cfg.pipeline_units_col] > 0,
+                       prj[cfg.pipeline_usd_col]/prj[cfg.pipeline_units_col], 0.0)
+        uplift = self._uplift_for(prj).values if len(prj) else np.array([])
+        pred_units = prj["h2_pred_units_shrunk"].values if "h2_pred_units_shrunk" in prj else np.zeros(len(prj))
+        proj_usd = float(np.sum(pred_units * auv * uplift)) if len(prj) else 0.0
+        meses_proj = sorted(prj[pc].astype(str).unique())
+        total = real_usd + proj_usd
+        t = pd.DataFrame({
+            "concepto": ["REAL (ya renovado)", "PROYECTADO (estimado)", "TOTAL 2026"],
+            "meses": [f"{meses_real[0]}..{meses_real[-1]}" if meses_real else "—",
+                      f"{meses_proj[0]}..{meses_proj[-1]}" if meses_proj else "—", "año"],
+            "usd": [round(real_usd, 0), round(proj_usd, 0), round(total, 0)],
+        }).set_index("concepto")
+        self._table(t, f"NÚMERO FINAL {year} = real + proyectado:", col_defs={
+            "meses": "rango de meses que aporta cada parte",
+            "usd": "USD de renovación (real observado / estimado)"})
+        self._log(f"    >> El año {year} cerraría en ${total:,.0f} "
+                  f"(${real_usd:,.0f} ya real + ${proj_usd:,.0f} a renovar).")
+        self._mark("step_h2_total_2026", metadata={"real": real_usd,
+                    "proyectado": proj_usd, "total": total})
+        self._done("step_h2_total_2026",
+                   f"TOTAL {year} ≈ ${total:,.0f} (real ${real_usd:,.0f} + "
+                   f"proyectado ${proj_usd:,.0f})")
+        return {"real": real_usd, "proyectado": proj_usd, "total": total}
+
+    def step_h2_forecast_bands(self, z_score=1.96, trend_skew=0.4,
+                               uplift_cv=0.10) -> dict:
+        """BANDA del forecast 2026, por SERIE y total. Dos cosas a la vez:
+
+        (A) BANDA POR SERIE — propagación de errores de un producto.
+            revenue = pipeline × tasa × AUV × uplift. pipeline es conocido;
+            los otros tres se estiman. Los errores RELATIVOS se combinan en
+            cuadratura (el término dominante manda):
+              (σ_rev/rev)² = (σ_tasa/tasa)² + (σ_uplift/uplift)² + (σ_AUV/AUV)²
+            - σ_tasa: MAX(binomial √(p(1−p)/n), WAPE del backtest). No se suman:
+              el WAPE ya contiene parte del ruido binomial (doble conteo).
+            - σ_uplift: cv del uplift (aprox.; por defecto uplift_cv).
+            - σ_AUV: dispersión de AUV en la celda (despreciable si precios estables).
+
+        (B) ASIMETRÍA por tendencia — DEPENDE DE SI EL MÉTODO MODELA TENDENCIA:
+            - método SIN tendencia (mandatory/shrunk): si la serie sube, el
+              método se queda plano → riesgo ARRIBA → abre arriba.
+            - método CON tendencia (temporal/EWM): ya extrapola la subida →
+              el riesgo es que NO siga (techo natural de la tasa) → abre ABAJO.
+            Además, TECHO: cuanto más alta la tasa (cerca de 100%), más se abre
+            abajo y menos arriba (poco recorrido para subir, mucho para caer).
+            Prudencia con series cortas: la 'pendiente' puede ser estacional,
+            no tendencia → se atenúa la asimetría si hay poca historia.
+
+        DOS TOTALES (con sus límites, ambos declarados):
+          · CUADRATURA: σ_total=√(Σσ_serie²). Asume errores INDEPENDIENTES →
+            banda estrecha. Es la desviación TÍPICA del total. Límite: si hay
+            shocks comunes (recesión, pricing global), se queda CORTA.
+          · SUMA DE EXTREMOS: Σlo … Σhi. Rango si la cartera se mueve COHERENTE
+            (todo a la vez). Límite: improbable bajo independencia → es el
+            PEOR/MEJOR caso correlacionado, no la desviación típica.
+        Ninguna es un IC frecuentista exacto: son referencias honestas.
+        """
         self._require("step_h2_forecast_bands",
                       ["step_h2_forecast_projection", "step_h2_backtest_test_months"])
         cfg, df = self.cfg, self.df
@@ -4494,57 +4694,116 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
                    if "WAPE_$" in self.h2_backtest[k] else self.h2_backtest[k]["wape"])
         wb = self.h2_backtest[gana]
         wape = wb.get("WAPE_$", wb.get("wape"))
-        wape = wape/100 if wape > 1.5 else wape           # acepta % o fracción
+        wape = wape/100 if wape > 1.5 else wape
         pr = df[df[cfg.dataset_role_col] == "projection"].copy()
-        pr["_mk"] = self._mand_key(pr)
         auvp = np.where(pr[cfg.pipeline_units_col] > 0,
                         pr[cfg.pipeline_usd_col]/pr[cfg.pipeline_units_col], 0)
         up = self._uplift_for(pr); up = up.values if hasattr(up, "values") else up
+        pr["_auv"] = auvp; pr["_up"] = up
         pr["_usd"] = pr["h2_pred_units_shrunk"].fillna(0).values*auvp*up
-        # suelo binomial por fila: SE_unidades = raíz(n p (1-p)) → $ = ·AUV·uplift
-        rate = (pr["h2_pred_units_shrunk"].fillna(0)
-                / pr[cfg.pipeline_units_col].replace(0, np.nan)).clip(0, 1).fillna(0)
-        se_u = np.sqrt(pr[cfg.pipeline_units_col]*rate*(1-rate)).fillna(0)
-        pr["_se_usd"] = se_u.values*auvp*up
-        # pendiente reciente por celda (si existe el radar)
-        skew = pd.Series(0.0, index=pr.index)
+        # ¿qué método usa cada serie? (para dirección de la asimetría)
+        eligible_ts = set(self.h2_fs.index[self.h2_fs.get("rate_ts").notna()]) \
+            if "rate_ts" in self.h2_fs.columns else set()
+        # pendiente reciente por serie (radar de tendencia)
+        sl = pd.Series(dtype=float)
         if getattr(self, "recent_slope", None) is not None and len(self.recent_slope):
             sl = self.recent_slope["pp_año"]/100.0
-            skew = pr["step_2_fs_id"].map(sl).fillna(0.0).clip(-1, 1)
-        g = pr.groupby("_mk")
+        # historia por serie (para atenuar si es corta → estacionalidad)
+        hist_m = self.h2_fs.get("step_2_history_months") \
+            if "step_2_history_months" in self.h2_fs.columns else None
+        # ---- banda POR SERIE ----
         rows = []
-        for mk, d in g:
-            pred = d["_usd"].sum()
-            err_model = wape*pred                          # error relativo del backtest
-            err_floor = float(np.sqrt((d["_se_usd"]**2).sum()))  # suelo en cuadratura
-            half = z_score*max(err_model, err_floor)
-            sk = float(np.average(skew.loc[d.index], weights=d["_usd"].clip(lower=0)+1))
-            lo = pred - half*(1 + trend_skew*max(-sk, 0))  # baja: más si pendiente <0
-            hi = pred + half*(1 + trend_skew*max(sk, 0))   # sube: más si pendiente >0
-            rows.append([mk, pred, max(lo, 0), hi, half, sk])
-        t = pd.DataFrame(rows, columns=["celda", "pred_usd", "lo", "hi",
-                                        "half_width", "skew"]).set_index("celda")
-        tot_pred = t["pred_usd"].sum()
-        tot_lo, tot_hi = t["lo"].sum(), t["hi"].sum()
+        for fs_id, d in pr.groupby("step_2_fs_id"):
+            pred = float(d["_usd"].sum())
+            if pred <= 0:
+                continue
+            n = float(d[cfg.pipeline_units_col].sum())
+            p = float(d["h2_pred_units_shrunk"].sum()/n) if n > 0 else 0.0
+            p = min(max(p, 0.0), 1.0)
+            # σ relativos de cada factor
+            se_bin = np.sqrt(p*(1-p)/n) if n > 0 else 0.5      # binomial de la tasa
+            rel_tasa = max(se_bin/p if p > 0 else 1.0, wape)    # MAX binomial vs método
+            rel_up = uplift_cv                                  # uplift (aprox.)
+            auv_vals = d["_auv"][d["_auv"] > 0]
+            rel_auv = float(auv_vals.std()/auv_vals.mean()) if len(auv_vals) > 1 and auv_vals.mean() > 0 else 0.0
+            rel = np.sqrt(rel_tasa**2 + rel_up**2 + rel_auv**2) # CUADRATURA
+            half = z_score*rel*pred
+            # ---- dirección de la asimetría ----
+            slope = float(sl.get(fs_id, 0.0))
+            con_tendencia = fs_id in eligible_ts
+            # atenuar si historia corta (puede ser estacionalidad, no tendencia)
+            att = 1.0
+            if hist_m is not None:
+                hm = float(hist_m.get(fs_id, 24))
+                att = min(1.0, max(0.0, (hm-12)/12))            # 0 a 12m→0; ≥24m→1
+            a_up = a_dn = 0.0
+            if abs(slope) > 1e-6:
+                if con_tendencia:
+                    # método ya extrapola la tendencia → riesgo de NO seguir
+                    if slope > 0: a_dn = trend_skew*min(slope, 1)*att   # subía: puede no seguir → abajo
+                    else:         a_up = trend_skew*min(-slope, 1)*att   # bajaba: puede no seguir → arriba
+                else:
+                    # método plano → riesgo de quedarse corto en la dirección de la tendencia
+                    if slope > 0: a_up = trend_skew*min(slope, 1)*att
+                    else:         a_dn = trend_skew*min(-slope, 1)*att
+            # TECHO natural de la tasa: alta → más abajo, menos arriba
+            techo = max(0.0, (p-0.7)/0.3)                       # 0 si p<70%; 1 si p=100%
+            a_dn += 0.3*techo; a_up = max(0.0, a_up - 0.2*techo)
+            lo = max(pred - half*(1+a_dn), 0.0)
+            hi = pred + half*(1+a_up)
+            asim = "simetrica"
+            if a_up - a_dn > 0.05: asim = "asimetrica_arriba"
+            elif a_dn - a_up > 0.05: asim = "asimetrica_abajo"
+            rows.append([fs_id, pred, lo, hi, half, slope,
+                         "con_tendencia" if con_tendencia else "sin_tendencia",
+                         round(p, 3), asim])
+        t = pd.DataFrame(rows, columns=["fs_id", "pred_usd", "lo", "hi", "half_sym",
+                                        "slope_pp", "metodo_tipo", "tasa", "flag_asimetria"
+                                        ]).set_index("fs_id")
         self.h2_bands = t
+        # ---- TOTALES ----
+        tot_pred = float(t["pred_usd"].sum())
+        # (1) suma de extremos (cartera coherente) — idea del usuario
+        sum_lo, sum_hi = float(t["lo"].sum()), float(t["hi"].sum())
+        # (2) cuadratura (independencia) — desviación típica del total
+        half_sym = (t["hi"]-t["lo"])/2.0   # semianchura efectiva por serie
+        cuad = float(np.sqrt((half_sym**2).sum()))
+        cuad_lo, cuad_hi = max(tot_pred-cuad, 0), tot_pred+cuad
+        n_asym = int((t["flag_asimetria"] != "simetrica").sum())
+        # tabla top por $
         self._table(t.sort_values("pred_usd", ascending=False).head(12).round(0),
-                    "Forecast 2026 con banda por celda (top 12 por $):",
-                    col_defs={"pred_usd": "forecast central de la celda, $",
-                              "lo / hi": "extremos inferior y superior de la banda",
-                              "half_width": "semi-anchura base (antes de asimetría), $",
-                              "skew": "pendiente reciente ponderada (+sube/−baja): abre el lado correspondiente"})
-        self._log(f"    método ganador del backtest: {gana} (WAPE $ {wape:.1%}) "
-                  f"= error relativo de la banda")
-        self._log(f"    TOTAL 2026: ${tot_pred:,.0f}  "
-                  f"[banda {z_score}σ: ${tot_lo:,.0f} … ${tot_hi:,.0f}]  "
-                  f"(±{100*(tot_hi-tot_pred)/max(tot_pred,1):.0f}%/"
-                  f"−{100*(tot_pred-tot_lo)/max(tot_pred,1):.0f}%)")
+                    "Forecast 2026 con banda POR SERIE (top 12 por $):", col_defs={
+                        "pred_usd": "forecast central de la serie, $",
+                        "lo / hi": "extremos de la banda (ya con asimetría)",
+                        "half_sym": "semi-anchura simétrica base (cuadratura de factores), $",
+                        "slope_pp": "pendiente reciente de la tasa (fracción/año)",
+                        "metodo_tipo": "si el método de la serie modela tendencia o no",
+                        "tasa": "tasa de renovación prevista (para el efecto techo)",
+                        "flag_asimetria": "simetrica / asimetrica_arriba / asimetrica_abajo"})
+        self._log(f"    método ganador del backtest: {gana} (WAPE $ {wape:.1%})")
+        self._log(f"    series con banda ASIMÉTRICA: {n_asym:,} de {len(t):,} "
+                  f"(filtra flag_asimetria != 'simetrica')")
+        self._log("")
+        self._log(f"    >> FORECAST 2026 = ${tot_pred:,.0f}")
+        self._log(f"       BANDA (1) suma de extremos [cartera coherente]: "
+                  f"${sum_lo:,.0f} … ${sum_hi:,.0f}")
+        self._log(f"         · suelo/techo si TODAS las series fallan a la vez en la misma")
+        self._log(f"           dirección. Límite: improbable si los errores son independientes.")
+        self._log(f"       BANDA (2) cuadratura [errores independientes]: "
+                  f"${cuad_lo:,.0f} … ${cuad_hi:,.0f}")
+        self._log(f"         · desviación TÍPICA del total (los errores se compensan).")
+        self._log(f"           Límite: se queda CORTA si hay shocks comunes (macro, pricing).")
+        self._log(f"       La verdad está entre ambas: (2) si independientes, (1) si correlacionadas.")
         self._mark("step_h2_forecast_bands",
-                   metadata={"total": tot_pred, "lo": tot_lo, "hi": tot_hi,
-                             "metodo": gana, "wape": wape})
+                   metadata={"total": tot_pred, "sum_lo": sum_lo, "sum_hi": sum_hi,
+                             "cuad_lo": cuad_lo, "cuad_hi": cuad_hi, "metodo": gana,
+                             "wape": wape, "n_asimetricas": n_asym})
         self._done("step_h2_forecast_bands",
-                   f"2026: ${tot_pred:,.0f} [${tot_lo:,.0f}…${tot_hi:,.0f}] {z_score}σ")
-        return {"total": tot_pred, "lo": tot_lo, "hi": tot_hi}
+                   f"2026 ${tot_pred:,.0f} | coherente [${sum_lo:,.0f}…${sum_hi:,.0f}] | "
+                   f"cuadratura [${cuad_lo:,.0f}…${cuad_hi:,.0f}] | {n_asym} asimétricas")
+        return {"total": tot_pred, "sum_lo": sum_lo, "sum_hi": sum_hi,
+                "cuad_lo": cuad_lo, "cuad_hi": cuad_hi}
+
 
     def step_h2_forecast_next_year(self) -> None:
         """FORECAST COMPLETO del año siguiente al pending (p.ej. 2027), donde
@@ -4776,6 +5035,8 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
 def run_hito_2(sf1) -> StratifiedForecastHito2:
     """Encadena HITO 2 sobre un HITO 1 ya corrido."""
     sf = StratifiedForecastHito2.from_hito1(sf1)
+    sf.step_3_report_recent_slope()
+    sf.step_3_report_top_trend()
     sf.step_h2_fit_baseline_mandatory()
     sf.step_h2_fit_shrunk()
     sf.step_h2_fit_uplift_covariates()
@@ -4786,6 +5047,7 @@ def run_hito_2(sf1) -> StratifiedForecastHito2:
     sf.step_h2_backtest_test_months()
     sf.step_h2_forecast_projection()
     sf.step_h2_forecast_bands()
+    sf.step_h2_total_2026()
     sf.step_h2_forecast_next_year()
     sf.step_h2_extend_AB()
     sf.step_h2_assemble_2027()

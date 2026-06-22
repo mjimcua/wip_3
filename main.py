@@ -15,14 +15,21 @@ import pandas as pd
 from stratified_forecast import ForecastConfiguration, Step1Config, StratifiedForecastHito2
 
 # ============================ SETUP (una vez) ============================
-df = pd.read_csv("portfolio_v2.csv")               # ← tu extract real
+# keep_default_na=False: que "NA" (Norteamérica), "N/A", etc. NO se lean como
+# NaN. Si tu extract no tiene esos valores, puedes quitarlo.
+df = pd.read_csv("portfolio_v3.csv", keep_default_na=False, na_values=[])  # ← tu extract real
+
 config = ForecastConfiguration(
     cfg=Step1Config(
         business_mandatory_dims=["regional_level_1", "product_level_1"],
-        pending_date="2026-07-01",
+        pending_date="2026-06-01",
         test_months=3,
-        covariate_cols=["desc_bucket", "price_cap", "msrp_increased"],
-        timevarying_positive_values=("si", "yes", "1", 1, True),  # ajusta a tu dato
+        covariate_cols=["discount_interval", "price_cap", "msrp_increased", "prev_OperationGroup"],
+        # CLAVE: declara las señales de comportamiento para activar el COLAPSO N1.
+        # Sin esta línea, step_2_collapse_signal_support dice "no aplica".
+        structural_timevarying_dims={"softcancel": "negative", "dormant": "negative"},
+        # los valores que cuentan como señal ACTIVA en tu dato (ajústalo):
+        timevarying_positive_values=("si", "yes", "1", 1, True, "True"),
     ),
     raw_data_path=None, verbosity="execution")
 
@@ -66,19 +73,20 @@ sf.step_6_add_story_columns()
 sf.step_6_report_story_figures()
 sf.describe_portfolio()                     # utilidad (no step)
 
-# ===================== HITO 2 — paso a paso (elegir método) ==============
-# (descomenta cuando vayas a ejecutar el HITO 2)
-# sf.step_h2_fit_baseline_mandatory()
-# sf.step_h2_fit_shrunk()
-# sf.step_h2_fit_uplift_covariates()
-# sf.step_h2_fit_ts()
-# sf.step_h2_reassess_support()           # Paso A: re-evaluar soporte tras colapso
-# sf.step_h2_improvement_summary()        # Paso B: antes/después económico
-# sf.step_h2_quality_photo()
-# sf.step_h2_backtest_test_months()
-# sf.step_h2_forecast_projection()
-# sf.step_h2_forecast_bands()
-# sf.step_h2_forecast_next_year()
-# sf.step_h2_extend_AB()
-# sf.step_h2_assemble_2027()
-# sf.step_h2_export_final_table()
+# ===================== HITO 2 — paso a paso (elegir método y predecir) ===
+sf.step_3_report_recent_slope()            # TENDENCIA: series con más pendiente reciente
+sf.step_3_report_top_trend()               #            (para evaluación gráfica en projection)
+sf.step_h2_fit_baseline_mandatory()        # M1: tasa plana del grano grueso
+sf.step_h2_fit_shrunk()                    # M3: encogida hacia el grupo del ÁRBOL de colapso
+sf.step_h2_fit_uplift_covariates()         # uplift por combinación de covariables
+sf.step_h2_fit_ts()                        # M4: serie temporal (EWM) en series con historia
+sf.step_h2_reassess_support()              # Paso A: re-evaluar soporte tras colapso
+sf.step_h2_improvement_summary()           # Paso B: antes/después económico
+sf.step_h2_quality_photo()
+sf.step_h2_backtest_test_months()          # elige método por WAPE en el test
+sf.step_h2_forecast_projection()           # predicción projection con el método elegido
+sf.step_h2_forecast_bands()                # banda POR SERIE + 2 totales (coherente / cuadratura)
+sf.step_h2_total_2026()                    # NÚMERO FINAL 2026 = real + proyectado
+sf.step_h2_forecast_next_year()            # 2027: regeneración de pipeline
+sf.step_h2_assemble_2027()                 # 2027: C1 firmado + C2 re-renovación + C3 adquisición
+sf.step_h2_export_final_table()            # tabla final para Power BI
