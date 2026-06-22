@@ -1,58 +1,84 @@
-"""Ejecución completa del framework (estado a 2026-06-12).
+"""Ejecución PASO A PASO del framework (no agregada).
 
-Corre HITO 1 (preparar y valorar) + HITO 2 (elegir método, predecir, bandas,
-horizonte) y muestra las cuatro cifras que el negocio pide para una iteración:
+Filosofía: cada step se llama explícitamente sobre el MISMO objeto `sf`. Así,
+en un notebook, puedes re-ejecutar UN solo step (o desde el que cambiaste)
+sin relanzar todo desde cero — el estado vive en `sf` y se va acumulando.
 
-  1. Forecast de RENOVACIÓN 2026 (projection) CON banda de confianza.
-  2. Aportaciones SIMULADAS de 2027, desglosadas:
-       C1 multi-año 2Y/3Y ya firmado (firme),
-       C2 re-renovación 1Y (renovaciones 2026 que vuelven a vencer en 2027),
-       C3 adquisición 1Y (altas 2026 que vencerán en 2027),
-       TOTAL 2027 = C1 + C2 + C3.
+Hay UN solo objeto, `sf`. (Antes había sf1/sf2: eran el mismo objeto en dos
+momentos; el HITO 2 hereda del HITO 1. Ya no se usa esa distinción.)
 
-Para datos REALES: cambiar la ruta del CSV y ajustar SOLO el bloque CONFIG
-con los nombres/valores reales de tus columnas (ver comentarios)."""
+Si trabajas en notebook: ejecuta el bloque SETUP una vez, y luego cada step
+en su propia celda. Para recalcular, vuelve a correr solo esa celda y las
+siguientes — no las anteriores.
+"""
 import pandas as pd
-from stratified_forecast import ForecastConfiguration, Step1Config, run_all
+from stratified_forecast import ForecastConfiguration, Step1Config, StratifiedForecastHito2
 
-# ----------------------------- DATOS -----------------------------
-CSV = "portfolio_v2.csv"                 # ← ruta de tu extract real
-df = pd.read_csv(CSV)
-
-# ----------------------------- CONFIG ----------------------------
-# Ajusta a tus columnas reales. Lo que NO cambie de nombre, déjalo igual.
+# ============================ SETUP (una vez) ============================
+df = pd.read_csv("portfolio_v2.csv")               # ← tu extract real
 config = ForecastConfiguration(
     cfg=Step1Config(
-        business_mandatory_dims=["regional_level_1", "product_level_1"],  # grano padre del shrinkage
-        pending_date="2026-07-01",       # primer mes a predecir (corta train/test/projection)
-        test_months=3,                   # meses reales reservados para el backtest escalonado
-        covariate_cols=["desc_bucket", "price_cap", "msrp_increased"],     # → uplift (tabla fina)
+        business_mandatory_dims=["regional_level_1", "product_level_1"],
+        pending_date="2026-07-01",
+        test_months=3,
+        covariate_cols=["desc_bucket", "price_cap", "msrp_increased"],
+        timevarying_positive_values=("si", "yes", "1", 1, True),  # ajusta a tu dato
     ),
     raw_data_path=None, verbosity="execution")
 
-# --------------------------- EJECUCIÓN ---------------------------
-sf1, sf2 = run_all(config, df_raw=df)
+sf = StratifiedForecastHito2(config)   # UN objeto para todo (H1 + H2)
+sf.df_raw = df
 
-# ----------------------- LECTURA DE RESULTADOS -------------------
-# (todo queda también en el log por pantalla y en tabla_final_forecast.csv)
-print("\n" + "=" * 60)
-print("RESUMEN DE LA ITERACIÓN")
-print("=" * 60)
+# ===================== HITO 1 — paso a paso (preparar y valorar) =========
+sf.step_0_validate_input()
+sf.step_1_normalize_period()
+sf.step_1_collapse_covariates()
+sf.step_1_derive_roles_from_period()
+sf.step_1_add_universe()
+sf.step_1_add_coverage_pattern()
+sf.step_1_add_forecast_route()
+sf.step_1_report_money_by_route()
+sf.step_1_drop_no_impact()
+sf.step_1_fill_gaps()
+sf.step_1_add_rates()
+sf.step_1_add_auv()
+sf.step_1_add_synthetic_flag()
+sf.step_1_assert_coherence()
+sf.step_1_report_density()
+sf.step_2_build_identity()
+sf.step_2_build_support()
+sf.step_2_collapse_signal_support()        # COLAPSO Nivel 1 (sustrato)
+sf.step_2_report_density_money()
+sf.step_2_report_gap_density_money()
+sf.step_2_report_support_profile()
+sf.step_2_report_no_training_top()
+sf.step_2_report_only_projection_top()
+sf.step_2_report_density_mandatory_vs_full()
+sf.step_2_report_history_length()
+sf.step_2_report_aggregation_cost()
+sf.step_3_anova_rate()
+sf.step_3_collapse_anova()                 # COLAPSO Nivel 2 (ANOVA)
+sf.step_3_report_dim_fragmentation()
+sf.step_3_classify_small_series()
+sf.step_3_report_level_coverage()
+sf.step_3_report_covariate_value()
+sf.step_6_add_story_columns()
+sf.step_6_report_story_figures()
+sf.describe_portfolio()                     # utilidad (no step)
 
-# 1) Renovación 2026 con banda
-b = sf2.step_metadata.get("step_h2_forecast_bands", {})
-if b:
-    print(f"1) RENOVACIÓN 2026 (projection): ${b['total']:,.0f}")
-    print(f"   banda: ${b['lo']:,.0f} … ${b['hi']:,.0f}  "
-          f"(método {b['metodo']}, WAPE {b['wape']:.1%})")
-
-# 2) Aportaciones 2027 desglosadas
-a = sf2.step_metadata.get("step_h2_assemble_2027", {})
-if a:
-    print(f"\n2) AÑO COMPLETO {a['year']}: ${a['total']:,.0f}")
-    print(f"   C1 multi-año firme  : ${a['c1']:,.0f}")
-    print(f"   C2 re-renovación 1Y : ${a['c2']:,.0f}  (renovaciones 2026 → pipeline 2027)")
-    print(f"   C3 adquisición 1Y   : ${a['c3']:,.0f}  (altas 2026 que vencerán)")
-
-# 3) Series a vigilar / explicar a negocio
-sf1.describe_portfolio()
+# ===================== HITO 2 — paso a paso (elegir método) ==============
+# (descomenta cuando vayas a ejecutar el HITO 2)
+# sf.step_h2_fit_baseline_mandatory()
+# sf.step_h2_fit_shrunk()
+# sf.step_h2_fit_uplift_covariates()
+# sf.step_h2_fit_ts()
+# sf.step_h2_reassess_support()           # Paso A: re-evaluar soporte tras colapso
+# sf.step_h2_improvement_summary()        # Paso B: antes/después económico
+# sf.step_h2_quality_photo()
+# sf.step_h2_backtest_test_months()
+# sf.step_h2_forecast_projection()
+# sf.step_h2_forecast_bands()
+# sf.step_h2_forecast_next_year()
+# sf.step_h2_extend_AB()
+# sf.step_h2_assemble_2027()
+# sf.step_h2_export_final_table()
