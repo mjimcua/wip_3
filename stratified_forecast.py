@@ -636,7 +636,7 @@ class StratifiedForecastHito1:
         agregado (jamás promediadas). La tabla FINA original se conserva en
         self.df_fine con fu_id (dims estables) y comb_id (covariables) para
         Fase 0, auditoría y back-annotation futura. Asserts: conservación de
-        masa. Sin covariables declaradas = no hace nada."""
+        pipeline/valor. Sin covariables declaradas = no hace nada."""
         self._require("step_1_collapse_covariates", ["step_1_normalize_period"])
         cfg = self.cfg
         covs = [c for c in (cfg.covariate_cols or []) if c in self.df.columns]
@@ -658,7 +658,7 @@ class StratifiedForecastHito1:
                                cfg.renewed_units_col, cfg.renewed_usd_col,
                                cfg.reacq_units_col, cfg.reacq_usd_col)
                    if c and c in fine.columns]
-        masa_pre = {c: float(fine[c].sum()) for c in sumcols}
+        conserva_pre = {c: float(fine[c].sum()) for c in sumcols}
         keys = dc + [pc]
         otras = [c for c in (rc, cfg.flag_time_series_col)
                  if c and c in fine.columns]
@@ -675,19 +675,19 @@ class StratifiedForecastHito1:
         for usd, uni, auv in pares:
             if usd in vista.columns and uni in vista.columns and auv in fine.columns:
                 vista[auv] = np.where(vista[uni] > 0, vista[usd] / vista[uni], 0.0)
-        for c, v in masa_pre.items():
+        for c, v in conserva_pre.items():
             v2 = float(vista[c].sum())
             if abs(v - v2) > max(1e-6 * abs(v), 1e-6):
-                raise AssertionError(f"collapse: masa NO conservada en {c}: {v} → {v2}")
+                raise AssertionError(f"collapse: pipeline/valor NO conservado en {c}: {v} → {v2}")
         self._log(f"  step_1_collapse_covariates: {n_fino:,} filas finas → "
                   f"{len(vista):,} filas FU-mes (covariables: {covs})")
         self._log(f"    combinaciones medias por (FU,mes): {n_fino / max(len(vista),1):.2f} | "
-                  f"masa conservada en {len(sumcols)} métricas ✓ | tabla fina en self.df_fine")
+                  f"pipeline/valor conservado en {len(sumcols)} métricas ✓ | tabla fina en self.df_fine")
         self.df = vista
         self._mark("step_1_collapse_covariates",
                    metadata={"covs": covs, "n_fino": n_fino, "n_vista": len(vista)})
         self._done("step_1_collapse_covariates",
-                   f"vista FU: {n_fino:,}→{len(vista):,} filas; masa conservada")
+                   f"vista FU: {n_fino:,}→{len(vista):,} filas; pipeline/valor conservado")
 
     def step_3_report_covariate_value(self, min_n=200) -> None:
         """FASE 0 (solo informa): cobertura mensual de las covariables (% de
@@ -1377,11 +1377,26 @@ class StratifiedForecastHito1:
         pc, rc = cfg.period_col, cfg.dataset_role_col
         hist = df[df[rc].isin(cfg.history_roles)]
         grp = hist.groupby("step_2_fs_id")
-        n_avg = grp.apply(lambda g: g[pu].sum() / max(g[pc].nunique(), 1))
-        usd_avg = grp.apply(lambda g: g[pusd].sum() / max(g[pc].nunique(), 1))
+        # agregaciones VECTORIZADAS (evitan apply-lambda que en pandas reciente
+        # devuelve objetos 2D y rompe el .map posterior con shape (0, N))
         n_periods = grp[pc].nunique()
+        n_sum = grp[pu].sum()
+        usd_sum = grp[pusd].sum()
+        denom = n_periods.replace(0, 1)
+        n_avg = (n_sum / denom).rename("n_avg")
+        usd_avg = (usd_sum / denom).rename("usd_avg")
         first = grp[pc].min()
-        history = grp.apply(lambda g: (g[pc].max() - g[pc].min()).n + 1 if len(g) else 0)
+        last = grp[pc].max()
+        # history en nº de meses: (último − primero) en meses + 1.
+        # Resta elemento a elemento de periodos → offset; .n da el entero.
+        def _months_between(a, b):
+            try:
+                return (a.year - b.year) * 12 + (a.month - b.month) + 1
+            except Exception:
+                return 1
+        history = pd.Series(
+            [_months_between(last[i], first[i]) for i in first.index],
+            index=first.index, name="history")
         cy = _derive_current_year(df, cfg)
         if cy is not None:
             pcurr = df[(df[rc] == "projection") &
@@ -2018,7 +2033,7 @@ class StratifiedForecastHito1:
         self._log(f"  step_2_report_aggregation_cost: ¿cuánto dinero cuesta predecir")
         self._log(f"    al grano GRUESO (mandatory) en vez del FINO? (gruesa={coarse})")
         self._log(f"    ── MARCO DEL CÁLCULO ──")
-        self._log(f"    1) Dispersión (el insumo): dentro de cada celda mandatory las")
+        self._log(f"    1) Dispersión (la pipeline que entra): dentro de cada celda mandatory las")
         self._log(f"       sub-poblaciones tienen tasas distintas (rango en pp).")
         self._log(f"    2) Coste en $: e = Σ_hija  N_proj × AUV_pipeline × (tasa_hija − tasa_media_celda)")
         self._log(f"       = lo que SUB/SOBRE-estima usar la tasa media en vez de la fina.")
@@ -2026,12 +2041,12 @@ class StratifiedForecastHito1:
         self._log(f"    ⚠ AISLA el efecto de la TASA, valorada a precio de pipeline (AUV).")
         self._log(f"      NO incluye revalorización (uplift) ni el efecto del soporte → es una")
         self._log(f"      COTA INFERIOR del valor de bajar de grano; el efecto real es ≥ este número.")
-        # dispersión (insumo) como contexto, ponderada por $
+        # dispersión (la pipeline a renovar) como contexto, ponderada por $
         cdf0 = pd.DataFrame(cells)
         tot0 = max(float(cdf0["usd"].sum()), 1) if "usd" in cdf0 else 1
         if "range_pp" in cdf0:
             disp20 = 100*float(cdf0.loc[cdf0["range_pp"] >= 20, "usd"].sum())/tot0 if "usd" in cdf0 else 0
-            self._log(f"    DISPERSIÓN (insumo): {disp20:.0f}% del $ vive en celdas cuyas hijas "
+            self._log(f"    DISPERSIÓN (pipeline a renovar): {disp20:.0f}% del $ vive en celdas cuyas hijas "
                       f"difieren ≥20pp en tasa → el promedio mezcla comportamientos.")
         self._log(f"    {len(cells):,} celdas con ≥2 FS | dinero ${total_usd:,.0f} | "
                   f"sensibilidad cartera: 1pp de tasa ≈ ${dpp_total:,.0f}")
@@ -2599,7 +2614,7 @@ class StratifiedForecastHito1:
               .rename(columns={"step_1_fs_density_median": "sop"}).copy())
         fs["sop"] = fs["sop"].fillna(0)
         fs["usd"] = fs["step_2_usd_proj"].fillna(0)
-        # masa del padre mandatory de cada serie (clave = dims obligatorias)
+        # pipeline del padre mandatory de cada serie (clave = dims obligatorias)
         mdims = list(cfg.business_mandatory_dims)
         df_k = df.assign(_mk=df[mdims].astype(str).agg("|".join, axis=1))
         parent_mass = df_k.groupby("_mk")[cfg.pipeline_units_col].sum()
