@@ -1040,16 +1040,27 @@ class StratifiedForecastHito1:
 
 
     def _table(self, df, title="", col_defs=None, max_rows=20):
-        """Pinta una tabla como DataFrame (visualización consistente) con
-        definiciones de columnas debajo."""
+        """Muestra una tabla SIEMPRE como DataFrame de pandas. En notebook usa
+        display() (tabla interactiva); fuera, vuelca el texto. Guarda el df en
+        self.last_tables[title] para inspección posterior. Las definiciones de
+        columna se imprimen debajo."""
         if title:
             self._log(f"  {title}")
-        for line in df.head(max_rows).to_string().splitlines():
-            self._log(f"    {line}")
+        view = df.head(max_rows)
+        try:
+            from IPython.display import display
+            get_ipython  # existe solo dentro de IPython/Jupyter
+            display(view)
+        except Exception:
+            for line in view.to_string().splitlines():
+                self._log(f"    {line}")
         if len(df) > max_rows:
             self._log(f"    ... ({len(df) - max_rows} filas más)")
         for c, d in (col_defs or {}).items():
             self._log(f"    col {c}: {d}")
+        if not hasattr(self, "last_tables"):
+            self.last_tables = {}
+        self.last_tables[title or f"tabla_{len(self.last_tables)}"] = df
 
 
 
@@ -1076,12 +1087,20 @@ class StratifiedForecastHito1:
         if len(sin) == 0:
             self._log("    ninguna serie a predecir carece de entrenamiento.")
         else:
-            t = pd.DataFrame({"usd_proj": sin,
-                              "meses_proj": meses.reindex(sin.index)})
-            self._table(t.head(top).round(0),
+            ej = (prj[prj["step_2_fs_id"].isin(sin.head(top).index)]
+                  .drop_duplicates("step_2_fs_id").set_index("step_2_fs_id"))
+            rows = []
+            for fsid in sin.head(top).index:
+                fila = {d: (ej.loc[fsid, d] if fsid in ej.index else "?")
+                        for d in self.dimension_cols}
+                fila["usd_proj"] = round(float(sin[fsid]), 0)
+                fila["meses_proj"] = int(meses.get(fsid, 0))
+                rows.append(fila)
+            self._table(pd.DataFrame(rows),
                         f"TOP {top} series a predecir SIN entrenamiento:",
                         col_defs={"usd_proj": "$ de pipeline en projection de la serie",
-                                  "meses_proj": "meses de projection con pipeline"})
+                                  "meses_proj": "meses de projection con pipeline",
+                                  "(dims)": "clave completa de la serie, para localizarla en origen"})
             self._log("    claves completas (para buscar en origen):")
             ej = (prj[prj["step_2_fs_id"].isin(sin.head(top).index)]
                   .drop_duplicates("step_2_fs_id").set_index("step_2_fs_id"))
@@ -1218,9 +1237,76 @@ class StratifiedForecastHito1:
                 "fs_all_noisy": all_noisy, "thresholds": thr,
                 "noisy_threshold": noisy}
         self._mark("step_1_report_density", metadata=meta)
+        # ---- INTERPRETACIÓN para humanos ----
+        # % de FU y % de $ en el tramo ruidoso (<noisy) y en el tramo sólido (>=100)
+        pct_fu_ruido = fu_by_level.get(labels[0], {}).get("pct_fu", 0)
+        pct_usd_ruido = fu_by_level.get(labels[0], {}).get("pct_usd_hist", 0)
+        solidos = [l for l in labels if l in ("100-200", "200-500", ">=500")]
+        pct_usd_solido = sum(fu_by_level.get(l, {}).get("pct_usd_hist", 0) for l in solidos)
+        pct_fs_ruido = 100*all_noisy/max(n_fs, 1)
+        # ---- ANÁLISIS DE PROJECTION (lo que vamos a predecir) ----
+        # Cada serie con $ en projection: ¿cuánto dinero hay a proyectar y qué
+        # soporte de ENTRENAMIENTO (train/test) tiene para aprender su tasa?
+        full = self.df
+        rc = cfg.dataset_role_col
+        pu_c, pusd_c = cfg.pipeline_units_col, cfg.pipeline_usd_col
+        prj = full[(full[rc] == "projection") & (full[pu_c] > 0)]
+        proj_usd_total = float(prj[pusd_c].sum())
+        self._log("")
+        self._log("    --- PROJECTION (lo que hay que predecir) ---")
+        if proj_usd_total <= 0:
+            self._log("      (no hay pipeline en projection)")
+            proj_solido = proj_sin_train = 0.0
+        else:
+            # soporte de entrenamiento por serie (train/test reales, no sintéticos)
+            tr = full[full[rc].isin(cfg.history_roles)
+                      & (full.get("step_1_synthetic", 0).fillna(0).astype(int) == 0)
+                      & (full[pu_c] > 0)]
+            key_cols = dims
+            tr_sop = tr.groupby(key_cols)[pu_c].median()
+            prj_k = prj.copy()
+            prj_key = (prj_k[key_cols].apply(tuple, axis=1) if len(key_cols) > 1
+                       else prj_k[key_cols[0]])
+            def _look(s):
+                d = s.to_dict()
+                if len(key_cols) > 1:
+                    d = {(k if isinstance(k, tuple) else (k,)): v for k, v in d.items()}
+                return prj_key.map(d)
+            prj_k["_train_sop"] = _look(tr_sop).fillna(0)
+            # repartir el $ de projection por calidad de su entrenamiento
+            band = pd.cut(prj_k["_train_sop"], [-np.inf, 0, noisy, 100, np.inf],
+                          labels=["sin train", f"train<{noisy}", f"train {noisy}-100", "train>=100"],
+                          right=False)
+            tbl = (prj_k.groupby(band, observed=False)[pusd_c].sum()
+                   .rename("usd_proj").to_frame())
+            tbl["pct"] = (100*tbl["usd_proj"]/proj_usd_total).round(1)
+            tbl["usd_proj"] = tbl["usd_proj"].round(0)
+            self._log(f"      $ a predecir (projection) = ${proj_usd_total:,.0f}")
+            self._log(f"      calidad del ENTRENAMIENTO de ese dinero:")
+            self._log(f"        tramo de soporte train | $ projection | %")
+            for lab in tbl.index:
+                self._log(f"        {str(lab):>18} | ${tbl.loc[lab,'usd_proj']:>14,.0f} | {tbl.loc[lab,'pct']:5.1f}%")
+            proj_solido = float(tbl.loc["train>=100", "pct"]) if "train>=100" in tbl.index else 0.0
+            proj_sin_train = float(tbl.loc["sin train", "pct"]) if "sin train" in tbl.index else 0.0
+
+        self._log("")
+        self._log("    >> LECTURA (para humanos):")
+        self._log(f"       · La cartera está MUY concentrada: el {pct_fu_ruido:.0f}% de las celdas")
+        self._log(f"         son diminutas (soporte<{noisy}) pero solo valen el {pct_usd_ruido:.0f}% del dinero.")
+        self._log(f"       · El dinero vive en pocas celdas grandes: el {pct_usd_solido:.0f}% del $ está")
+        self._log(f"         en celdas con soporte>=100 (predecibles con poca incertidumbre).")
+        self._log(f"       · Pero como SERIES, el {pct_fs_ruido:.0f}% son ruidosas todos los meses")
+        self._log(f"         (soporte mediano del portfolio = {median_of_medians:.0f} unidades/mes).")
+        self._log(f"       · Conclusión: muchas series pobres (problema de soporte → colapso),")
+        self._log(f"         pero el grueso del dinero es sólido. El riesgo de muestra se")
+        self._log(f"         concentra en VOLUMEN de celdas, no en VALOR.")
+        self._log(f"       · A PROYECTAR: del dinero en projection, el {proj_solido:.0f}% tiene")
+        self._log(f"         entrenamiento sólido (train>=100) y el {proj_sin_train:.0f}% no tiene")
+        self._log(f"         entrenamiento (irá por heurística/grupo).")
         self._done("step_1_report_density",
-                   f"densidad medida ({n_fs:,} FS); columnas step_1_fs_density_median, _min, "
-                   f"_prop_ge_{{{','.join(map(str, thr))}}}")
+                   f"PROJECTION: ${proj_usd_total:,.0f} a predecir, {proj_solido:.0f}% con "
+                   f"entrenamiento sólido y {proj_sin_train:.0f}% sin entrenamiento | "
+                   f"histórico: {pct_usd_solido:.0f}% del $ en celdas soporte>=100")
         return meta
 
     def step_1_add_rates(self) -> None:
@@ -1673,13 +1759,18 @@ class StratifiedForecastHito1:
         else:
             self._log(f"    forecast series SOLO-projection: {n_series:,} "
                       f"({100*solo.sum()/total:.1f}% del $ a predecir)")
-            self._log(f"    TOP {top} por $ (revisar si falta una variable a futuro):")
             ej = (prj[prj["_fsk"].isin(solo.head(top).index)]
                   .drop_duplicates("_fsk").set_index("_fsk"))
+            rows = []
             for fsid in solo.head(top).index:
-                clave = " | ".join(f"{d}={ej.loc[fsid, d]}" for d in self.dimension_cols) \
-                    if fsid in ej.index else str(fsid)
-                self._log(f"      ${solo[fsid]:>12,.0f}  {clave}")
+                fila = {d: (ej.loc[fsid, d] if fsid in ej.index else "?")
+                        for d in self.dimension_cols}
+                fila["usd_projection"] = round(float(solo[fsid]), 0)
+                rows.append(fila)
+            tabla = pd.DataFrame(rows)
+            self._table(tabla, f"TOP {top} forecast series SOLO en projection (por $):",
+                        col_defs={"usd_projection": "$ de pipeline a predecir (sin historia que aprender)",
+                                  "(dims)": "clave completa de la serie, para localizarla en origen"})
         self._mark("step_2_report_only_projection_top",
                    metadata={"n_series": n_series,
                              "pct_usd": 100*float(solo.sum())/total})
