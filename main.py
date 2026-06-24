@@ -21,14 +21,15 @@ df = pd.read_csv("portfolio_v3.csv", keep_default_na=False, na_values=[])  # ←
 
 config = ForecastConfiguration(
     cfg=Step1Config(
-        business_mandatory_dims=["regional_level_1", "product_level_1"],
-        pending_date="2026-06-01",
-        test_months=3,
+        business_mandatory_dims=["tr_regional_level_1", "tr_product_level_1"],
+        # roles (train/test/projection) vienen de SQL, no se derivan por fecha:
+        use_raw_roles=True,
+        # mes EN CURSO (incompleto): va en train pero fuera del backtest. La
+        # columna la trae SQL (0/1). Es instrumental, NO una dimensión.
+        current_month_col="is_current_month",
         covariate_cols=["discount_interval", "price_cap", "msrp_increased", "prev_OperationGroup"],
         # CLAVE: declara las señales de comportamiento para activar el COLAPSO N1.
-        # Sin esta línea, step_2_collapse_signal_support dice "no aplica".
         structural_timevarying_dims={"softcancel": "negative", "dormant": "negative"},
-        # los valores que cuentan como señal ACTIVA en tu dato (ajústalo):
         timevarying_positive_values=("si", "yes", "1", 1, True, "True"),
     ),
     raw_data_path=None, verbosity="execution")
@@ -88,5 +89,6 @@ sf.step_h2_forecast_projection()           # predicción projection con el méto
 sf.step_h2_forecast_bands()                # banda POR SERIE + 2 totales (coherente / cuadratura)
 sf.step_h2_total_2026()                    # NÚMERO FINAL 2026 = real + proyectado
 sf.step_h2_forecast_next_year()            # 2027: regeneración de pipeline
+sf.step_h2_extend_AB()                     # 2027: extiende horizonte (1Y que re-renuevan en 2027)
 sf.step_h2_assemble_2027()                 # 2027: C1 firmado + C2 re-renovación + C3 adquisición
 sf.step_h2_export_final_table()            # tabla final para Power BI

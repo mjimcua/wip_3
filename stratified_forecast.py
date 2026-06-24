@@ -49,6 +49,10 @@ class Step1Config:
     # cobertura (arranques frágiles que fabrican huecos). None = sin recorte.
     # Detección/eliminación de PILOTOS: prefijo débil antes del arranque real.
     use_raw_roles: bool = False          # False = calcula; True = usa columna del raw
+    # Columna (de SQL) que marca el mes EN CURSO (incompleto): va en train pero
+    # se EXCLUYE del backtest y de la elección de método; solo visualización.
+    # Es INSTRUMENTAL (como dataset_role): NO es una dimensión de segmentación.
+    current_month_col: str = "is_current_month"
     # compatibilidad (aliases; no usar en config nuevas):
     derive_roles_from_period: Optional[bool] = None
     role_as_of_period: Optional[str] = None
@@ -93,7 +97,7 @@ class Step1Config:
     flag_time_series_normal_value: int = 0
     flag_time_series_ts_value: int = 1
     ts_revenue_col: str = "total_renewed_usd"
-    ts_region_col: str = "regional_level_1"
+    ts_region_col: str = "tr_regional_level_1"
 
     # ---- dimensiones por COMPLEMENTO (no por lista blanca) ----
     # Una columna es DIMENSIÓN si NO es una columna de rol/medida ni está en
@@ -182,6 +186,9 @@ class Step1Config:
                 self.pipeline_units_col, self.pipeline_usd_col,
                 self.renewed_units_col, self.renewed_usd_col,
                 self.flag_time_series_col, self.ts_revenue_col}
+        # el flag de mes en curso es instrumental, NUNCA una dimensión
+        if getattr(self, "current_month_col", None):
+            cols.add(self.current_month_col)
         for c in (self.reacq_units_col, self.reacq_usd_col,
                   self.auv_pipeline_col, self.auv_renewed_col, self.auv_reacq_col):
             if c is not None:
@@ -315,7 +322,7 @@ STEP_META = {
  "step_3_report_recent_slope": dict(ref="", preg="¿Qué forecast series tienen más tendencia reciente (a vigilar en projection)?", defs=["FS"], crit="pendiente de la tasa en los últimos meses × $ de projection; para evaluación gráfica.", formula="pendiente pp/año por regresión ponderada en ventana reciente; ranking |pendiente|×$"),
  "step_3_report_top_trend": dict(ref="", preg="¿Qué series cambian más su tasa en el histórico?", defs=["FS"], crit="tendencia histórica; informa.", formula="cambio de tasa en ventana"),
  "step_h2_assemble_2027": dict(ref="", preg="¿Cuánto saldrá el año completo siguiente y cuánto aporta cada parte?", defs=[], crit="C1 multi-año ya firmado (firme) + C2 re-renovación 1Y + C3 adquisición 1Y (ambas simuladas, banda ancha); total = C1+C2+C3.", formula="C1 = pred_shrunk×AUV×uplift de projection 2Y/3Y del año objetivo; C2/C3 = pred_usd de extend_AB partido por share de A vs B"),
- "step_h2_backtest_test_months": {"ref": "§2.8", "preg": "¿Cuánto MEJORA cada bloque de variables, en $ reales?", "defs": ["WAPE"], "crit": "escalonado M1→M4 sobre test reservado; gana el WAPE $ mínimo (validación out-of-sample pendiente, ver doc)."},
+ "step_h2_backtest_test_months": {"ref": "§2.8", "preg": "¿Qué método gana en GLOBAL y en CADA serie?", "defs": ["WAPE", "FS"], "crit": "escalera M1→M4 sobre test (diagnóstico global) Y elección POR SERIE: cada FS toma su método de menor WAPE. Las pequeñas ya van agrupadas por el árbol. El elegido se re-entrena con train+test para projection (el reciente pesa; es selección, no validación out-of-sample)."},
 }
 
 
@@ -334,7 +341,7 @@ for _k, _v in {
  "step_2_report_history_length": "longitud = meses entre nacimiento y fin de historia de la serie",
  "step_h2_fit_shrunk": "z = n/(n+k); k = ruido-dentro/varianza-entre (momentos), recortado a [5, 5000]; tasa publicada = z*propia + (1-z)*celda",
  "step_3_anova_rate": "eta2 = varianza-entre-niveles / varianza-total de la tasa, ponderada por soporte",
- "step_h2_backtest_test_months": "WAPE = Suma|pred-real|/Suma(real) en $; sesgo = (Suma pred - Suma real)/Suma real; pred$ = tasa*pipeline*AUV_pipe*uplift",
+ "step_h2_backtest_test_months": "global: WAPE=Suma|pred-real|/Suma(real) en $. Por serie: metodo_elegido=argmin_m WAPE_m(serie); reparto del $ a proyectar por método elegido",
  "step_h2_fit_uplift_covariates": "uplift_comb = (Suma $ren/Suma u_ren)/(Suma $pipe/Suma u_pipe) del train de la combinación; ajustado = share_info*factor + (1-share_info)*base de la celda",
  "step_h2_quality_photo": "error presupuestado = Suma_series SE*$, con SE = raiz(p(1-p)/n) (en DESPUÉS, SE*z)",
 }.items():
@@ -751,46 +758,86 @@ class StratifiedForecastHito1:
 
 
     def step_1_derive_roles_from_period(self) -> None:
-        """Asigna roles train/test/projection a partir de pending_date.
-          projection = desde pending_date en adelante (mes incluido)
-          test       = los test_months meses inmediatamente anteriores
-          train      = todo lo anterior
-        Con use_raw_roles=True solo DIAGNOSTICA (respeta la columna del raw)."""
+        """Roles train/test/projection. La FUENTE DE VERDAD es la columna del
+        raw (viene de SQL). Aquí solo se VALIDA y se marca el mes EN CURSO:
+          - projection = lo que se predice (desde el mes de corte).
+          - test       = los meses COMPLETOS de validación (deciden método y error).
+          - train      = el resto, INCLUIDO el mes en curso (incompleto).
+        El mes en curso va en train pero se marca (current_periods): NO cuenta
+        para el backtest ni para entrenar; solo inspección visual.
+
+        La COBERTURA se evalúa luego desde projection: dada una serie en
+        projection, ¿tiene train y test? (lo hace step_1_add_coverage_pattern).
+
+        (Modo legacy use_raw_roles=False: deriva por pending_date/test_months.)
+        """
         self._require("step_1_derive_roles_from_period", ["step_1_normalize_period"])
         cfg, df = self.cfg, self.df
         rc, pc = cfg.dataset_role_col, cfg.period_col
-        antes = df[rc].astype(str).value_counts(dropna=False).to_dict()
-        self._log(f"  step_1_derive_roles_from_period: roles en el raw ANTES:\n{self._fmt_dict(antes)}")
-        if not df[rc].isin(cfg.history_roles).any():
-            self._log(f"    ⚠ NINGUNA fila casa con history_roles={cfg.history_roles}: "
-                      f"sin historia, todo caería a heurística/shrink. ¿Valores o "
-                      f"columna de roles distintos a los esperados?")
+        cur_col = getattr(cfg, "current_month_col", "is_current_month")
+
         if cfg.use_raw_roles:
-            self._mark("step_1_derive_roles_from_period", metadata={"derived": False, "antes": antes})
+            roles = df[rc].astype(str).value_counts(dropna=False).to_dict()
+            self._log(f"  step_1_derive_roles_from_period: roles del raw (SQL):\n"
+                      f"{self._fmt_dict(roles)}")
+            for r in ("train", "test", "projection"):
+                if roles.get(r, 0) == 0:
+                    self._log(f"    ⚠ rol '{r}' VACÍO en el raw: revisa el etiquetado en SQL.")
+            # ---- mes en curso (incompleto): constante por PERIODO ----
+            # collapse_covariates agrega y elimina la columna instrumental del df;
+            # se lee del raw original (df_raw), mapeando por periodo.
+            cur_periods = set()
+            raw = getattr(self, "df_raw", None)
+            src_df, src_pc = (raw, pc) if (raw is not None and cur_col in raw.columns) else \
+                             (df if cur_col in df.columns else None, pc)
+            if src_df is not None and cur_col in src_df.columns:
+                per = (pd.PeriodIndex(pd.to_datetime(src_df[src_pc], errors="coerce"), freq="M").astype(str)
+                       if not str(src_df[src_pc].dtype).startswith("period")
+                       else src_df[src_pc].astype(str))
+                f = (src_df[cur_col].astype(str).str.lower().isin(["1", "true", "si", "yes", "y"])
+                     | (src_df[cur_col] == 1))
+                cur_periods = set(pd.Series(per)[f.values])
+            self.current_periods = cur_periods   # robusto: sobrevive reconstrucciones
+            if cur_periods:
+                en_train = df.loc[df[pc].astype(str).isin(cur_periods), rc].isin(["train"]).all()
+                self._log(f"    mes en curso: {sorted(cur_periods)} — INCOMPLETO: "
+                          f"va en train pero FUERA del backtest (solo visualización).")
+                if not en_train:
+                    self._log(f"    ⚠ el mes en curso NO está todo en 'train' en SQL — revisa.")
+            else:
+                self._log(f"    (sin columna '{cur_col}' o sin meses marcados: el test "
+                          f"usará todos los meses 'test')")
+            self.df = df
+            self._mark("step_1_derive_roles_from_period",
+                       metadata={"derived": False, "roles": roles,
+                                 "current_periods": sorted(cur_periods)})
             self._done("step_1_derive_roles_from_period",
-                       f"use_raw_roles=True — se respeta la columna '{rc}' del raw")
+                       f"roles de SQL validados; mes en curso: "
+                       f"{sorted(cur_periods) if cur_periods else 'ninguno'} (fuera del backtest)")
             return
+
+        # ---- modo legacy: derivar por fecha (compatibilidad) ----
+        antes = df[rc].astype(str).value_counts(dropna=False).to_dict()
         pdate = (pd.Period(str(cfg.pending_date)[:7], freq="M")
                  if cfg.pending_date else pd.Period(pd.Timestamp.now(), freq="M"))
         t_months = cfg.test_months
-        t0 = pdate - t_months                # primer mes de test
-        t1 = pdate - 1                       # último mes de test
+        t0, t1 = pdate - t_months, pdate - 1
         per = df[pc]
         df[rc] = np.where(per >= pdate, "projection",
                           np.where(per >= t0, "test", "train"))
+        self.current_periods = set()
         despues = df[rc].value_counts().to_dict()
-        self._log(f"    pending_date={pdate} | test_months={t_months}")
+        self._log(f"    [legacy] pending_date={pdate} | test_months={t_months}")
         self._log(f"    → train ≤ {t0 - 1} | test = {t0}..{t1} | projection ≥ {pdate}")
-        self._log(f"    roles DESPUÉS:\n{self._fmt_dict(despues)}")
         for r in ("train", "test", "projection"):
             if despues.get(r, 0) == 0:
-                self._log(f"    ⚠ rol '{r}' quedó VACÍO: revisa pending_date/ventana del extract.")
+                self._log(f"    ⚠ rol '{r}' quedó VACÍO: revisa pending_date/ventana.")
         self.df = df
         self._mark("step_1_derive_roles_from_period",
                    metadata={"derived": True, "pending_date": str(pdate),
                              "test": [str(t0), str(t1)], "antes": antes, "despues": despues})
         self._done("step_1_derive_roles_from_period",
-                   f"roles derivados: pending={pdate}, test={t0}..{t1}")
+                   f"[legacy] roles derivados: pending={pdate}, test={t0}..{t1}")
 
     def step_1_add_universe(self) -> None:
         """Añade step_1_universe (normal | time_series): cómo se predice la fila."""
@@ -1148,7 +1195,7 @@ class StratifiedForecastHito1:
         if "step_2_fs_id" in df.columns:
             print(f"  FUs={len(df):,} | FSs={df['step_2_fs_id'].nunique():,} | "
                   f"soporte mediano FS-mes={df[pu].median():,.0f}")
-        for c in ("term", "term_level_1", "purchase_type"):
+        for c in ("term", "tr_term_level_1", "tr_origin_type_SKU_based", "cpf_tr_net_new_v2"):
             if c in df.columns:
                 print(f"  {c}: {df.groupby(c)[pu].sum().to_dict()}")
         covs = getattr(cfg, "covariate_cols", []) or []
@@ -4057,7 +4104,7 @@ def _simpson_zscore(rate_valid, fu_table, fs_dims, P):
         (merged["step_2_n_avg"] > 0) & merged["mean"].between(0, 1),
         np.sqrt(merged["mean"]*(1-merged["mean"])/merged["step_2_n_avg"]), np.nan)
     results = []
-    for axis in [d for d in ["regional_level_1", "product_level_1"] if d in merged.columns]:
+    for axis in [d for d in ["tr_regional_level_1", "tr_product_level_1"] if d in merged.columns]:
         for gval, g in merged.groupby(axis):
             if len(g) < 2:
                 continue
@@ -4126,8 +4173,8 @@ if __name__ == "__main__":
     config = ForecastConfiguration(cfg=Step1Config(
         dataset_role_col="forecast_dataset", reacq_units_col=None, reacq_usd_col=None,
         auv_pipeline_col=None, auv_renewed_col=None, auv_reacq_col=None,
-        business_mandatory_dims=["regional_level_1", "regional_level_2",
-                                   "product_level_1", "product_level_2"],
+        business_mandatory_dims=["tr_regional_level_1", "tr_regional_level_2",
+                                   "tr_product_level_1", "tr_product_level_2"],
         structural_stable_dims=[], structural_timevarying_dims={}),
         raw_data_path=csv, verbosity="execution")
     sf = StratifiedForecast(config)
@@ -4153,13 +4200,30 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         md = self.cfg.business_mandatory_dims
         return df[md].astype(str).agg("|".join, axis=1)
 
-    def _real_hist(self, roles):
+    def _target_period(self):
+        """Mes de corte = primer mes de projection (robusto; independiente de
+        pending_date, que con roles de SQL puede ser None)."""
+        cfg, df = self.cfg, self.df
+        proj = df.loc[df[cfg.dataset_role_col] == "projection", cfg.period_col]
+        return proj.min() if len(proj) else pd.Period(pd.Timestamp.now(), freq="M")
+
+    def _target_year(self):
+        return self._target_period().year
+
+    def _real_hist(self, roles, drop_current=True):
+        """Historia real (no sintética) de series trainable en los roles dados.
+        drop_current=True excluye el MES EN CURSO (incompleto): no entrena ni
+        valida. False solo para ver el dato tal cual."""
         cfg, df = self.cfg, self.df
         m = (df["step_1_forecast_route"] == "trainable") \
             & (df["step_1_universe"] == "normal") \
             & df[cfg.dataset_role_col].isin(roles)
         if "step_1_synthetic" in df.columns:
             m &= df["step_1_synthetic"].fillna(0).astype(int) == 0
+        if drop_current:
+            cp = getattr(self, "current_periods", None)
+            if cp:
+                m &= ~df[cfg.period_col].astype(str).isin(cp)
         return df[m]
 
     # ---------- pasos ----------
@@ -4377,14 +4441,18 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         ni = f["comb_id"].str.contains("no_info")
         f = f.assign(_up=f["comb_id"].map(T3["up"]))
         f.loc[ni, "_up"] = np.nan                      # no_info → base luego
-        w = f.groupby(["fu_id", pc]).apply(
-            lambda d: pd.Series({
-                "w_info": d.loc[~d["_up"].isna(), pu].sum(),
-                "w_tot": d[pu].sum(),
-                "up_info": np.average(d.loc[~d["_up"].isna(), "_up"],
-                                      weights=d.loc[~d["_up"].isna(), pu])
-                           if d.loc[~d["_up"].isna(), pu].sum() > 0 else np.nan}),
-            include_groups=False)
+        # VECTORIZADO (antes era groupby.apply con lambda → O(grupos), lento):
+        # media ponderada del uplift por (fu_id, mes) usando solo filas con _up.
+        f["_w_tot"] = f[pu]
+        info = f["_up"].notna()
+        f["_w_info"] = np.where(info, f[pu], 0.0)
+        f["_up_x_w"] = np.where(info, f["_up"]*f[pu], 0.0)
+        gk = f.groupby(["fu_id", pc])
+        agg = gk[["_w_info", "_w_tot", "_up_x_w"]].sum()
+        agg["up_info"] = np.where(agg["_w_info"] > 0,
+                                  agg["_up_x_w"]/agg["_w_info"].replace(0, np.nan), np.nan)
+        w = agg.rename(columns={"_w_info": "w_info", "_w_tot": "w_tot"})[
+            ["w_info", "w_tot", "up_info"]]
         self.h2_uplift_adj = w
         self._log(f"  step_h2_fit_uplift_covariates: T3={len(T3)} combinaciones "
                   f"(global {gl_up:.2f}) | uplift_ajustado en {len(w):,} (FU,mes)")
@@ -4585,14 +4653,69 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         res = {k: {"wape": v["WAPE_$"], "sesgo": v["sesgo_$"]} for k, v in res.items()}
         self.h2_backtest = res
         gana = min(res, key=lambda k: res[k]["wape"])
-        self._mark("step_h2_backtest_test_months", metadata=res)
+
+        # ====== ELECCIÓN POR SERIE (no global) ======
+        # Para cada forecast series, WAPE en el test de cada método candidato.
+        # Las pequeñas YA están agrupadas por el árbol antes de llegar aquí, así
+        # que tienen evidencia suficiente; el método elegido se re-entrena luego
+        # con train+test (el dato reciente importa) para predecir projection.
+        cand = {"M1 mandatory": (r_m, up_b), "M2 +covariables": (r_m, up_a),
+                "M3 +dims finas (shrunk)": (r_s, up_a), "M4 +serie temporal": (r_t, up_a)}
+        te_fs = te["step_2_fs_id"].values
+        real_v = real_usd.values
+        # matriz de error |pred-real| por método, agregada por serie
+        err_by_method = {}
+        real_by_fs = pd.Series(real_v, index=te_fs).groupby(level=0).sum()
+        for nom, (r, u) in cand.items():
+            pred = (r * pipe_u * auvp * u).values
+            ae = pd.Series(np.abs(pred - real_v), index=te_fs).groupby(level=0).sum()
+            err_by_method[nom] = ae / real_by_fs.replace(0, np.nan)
+        wape_fs = pd.DataFrame(err_by_method)        # filas=serie, cols=método (WAPE)
+        # ganador por serie = menor WAPE; si una serie no tiene test (NaN), M3 shrunk
+        elegido = wape_fs.idxmin(axis=1)
+        sin_test = wape_fs.isna().all(axis=1)
+        elegido[sin_test] = "M3 +dims finas (shrunk)"
+        wape_elegido = wape_fs.min(axis=1)
+        self.h2_method_by_fs = pd.DataFrame({
+            "metodo_elegido": elegido,
+            "wape_serie": wape_elegido}).reindex(self.h2_fs.index)
+        # las series sin fila en wape_fs (sin test) → shrunk, wape NaN
+        self.h2_method_by_fs["metodo_elegido"] = self.h2_method_by_fs[
+            "metodo_elegido"].fillna("M3 +dims finas (shrunk)")
+        # reparto de $ de projection por método elegido (informe)
+        pr_now = self.df[self.df[cfg.dataset_role_col] == "projection"].copy()
+        if len(pr_now):
+            au = np.where(pr_now[cfg.pipeline_units_col] > 0,
+                          pr_now[cfg.pipeline_usd_col]/pr_now[cfg.pipeline_units_col], 0)
+            upj = self._uplift_for(pr_now)
+            rs_now = pr_now["step_2_fs_id"].map(self.h2_fs["rate_shrunk"]).fillna(0)
+            pr_now["_usd"] = (rs_now * pr_now[cfg.pipeline_units_col] * au * upj).values
+            pr_now["_met"] = pr_now["step_2_fs_id"].map(self.h2_method_by_fs["metodo_elegido"])
+            rep = pr_now.groupby("_met")["_usd"].agg(["sum", "count"])
+            rep["pct"] = (100*rep["sum"]/rep["sum"].sum()).round(1)
+            self._log("")
+            self._log("  MÉTODO ELEGIDO POR SERIE — reparto del $ a proyectar:")
+            self._log(f"    {'método':<26} | {'$ projection':>14} | {'%':>5} | series")
+            for met in rep.sort_values("sum", ascending=False).index:
+                self._log(f"    {met:<26} | ${rep.loc[met,'sum']:>13,.0f} | "
+                          f"{rep.loc[met,'pct']:5.1f} | {int(rep.loc[met,'count']):,}")
+            wm = self.h2_method_by_fs["wape_serie"]
+            self._log(f"    WAPE por serie (mediana): {wm.median():.1%} | "
+                      f"series con método elegido: {self.h2_method_by_fs['metodo_elegido'].notna().sum():,}")
+        n_met = self.h2_method_by_fs["metodo_elegido"].value_counts().to_dict()
+        self._mark("step_h2_backtest_test_months", metadata={"global": res,
+                    "por_serie": {k: int(v) for k, v in n_met.items()}})
         self._done("step_h2_backtest_test_months",
-                   f"gana {gana} (WAPE $ {res[gana]['wape']:.1%})")
+                   f"global gana {gana} ({res[gana]['wape']:.1%}); "
+                   f"POR SERIE: {len(self.h2_method_by_fs):,} series con método propio")
 
     def step_h2_forecast_projection(self) -> None:
-        """Predicción final para PROJECTION con ambos métodos (columnas
-        h2_pred_units_mandatory / h2_pred_units_shrunk en el df), lista para
-        PBI y para la back-annotation futura a la tabla fina."""
+        """Predicción final para PROJECTION. Cada serie usa el MÉTODO ELEGIDO
+        por el backtest (h2_method_by_fs): M1/M2 (mandatory ± uplift), M3
+        (shrunk hacia el grupo del árbol) o M4 (serie temporal). h2_pred_units_
+        mandatory queda como referencia; h2_pred_units_shrunk pasa a ser la
+        predicción CON EL MÉTODO ELEGIDO de cada serie (re-entrenado con train+
+        test, el dato reciente importa). Lista para PBI y back-annotation."""
         self._require("step_h2_forecast_projection", ["step_h2_backtest_test_months"])
         cfg, df = self.cfg, self.df
         pr = df[cfg.dataset_role_col] == "projection"
@@ -4600,15 +4723,30 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         gl = self.h2_mandatory["ren"].sum() / max(self.h2_mandatory["n"].sum(), 1)
         rm = mk.map(self.h2_mandatory["rate"]).fillna(gl)
         rs = df.loc[pr, "step_2_fs_id"].map(self.h2_fs["rate_shrunk"]).fillna(rm)
+        rt = df.loc[pr, "step_2_fs_id"].map(self.h2_fs["rate_shrunk_ts"]).fillna(rs)
+        # tasa según el método elegido de cada serie
+        fs_ids = df.loc[pr, "step_2_fs_id"]
+        met = fs_ids.map(self.h2_method_by_fs["metodo_elegido"]) \
+            if getattr(self, "h2_method_by_fs", None) is not None else None
+        if met is not None:
+            r_elegida = rs.copy()                                  # default M3
+            r_elegida[met.isin(["M1 mandatory", "M2 +covariables"]).values] = \
+                rm[met.isin(["M1 mandatory", "M2 +covariables"]).values]
+            r_elegida[(met == "M4 +serie temporal").values] = \
+                rt[(met == "M4 +serie temporal").values]
+        else:
+            r_elegida = rs
         df.loc[pr, "h2_pred_units_mandatory"] = rm * df.loc[pr, cfg.pipeline_units_col]
-        df.loc[pr, "h2_pred_units_shrunk"] = rs * df.loc[pr, cfg.pipeline_units_col]
+        df.loc[pr, "h2_pred_units_shrunk"] = r_elegida.values * df.loc[pr, cfg.pipeline_units_col]
+        df.loc[pr, "h2_metodo_elegido"] = met.values if met is not None else "M3 +dims finas (shrunk)"
         tm = float(df.loc[pr, "h2_pred_units_mandatory"].sum())
         ts = float(df.loc[pr, "h2_pred_units_shrunk"].sum())
         self.df = df
         self._log(f"  step_h2_forecast_projection: unidades previstas — "
-                  f"mandatory {tm:,.0f} | shrunk {ts:,.0f} (Δ {ts-tm:+,.0f})")
+                  f"mandatory(ref) {tm:,.0f} | método-elegido {ts:,.0f} (Δ {ts-tm:+,.0f})")
         self._mark("step_h2_forecast_projection")
-        self._done("step_h2_forecast_projection", "predicciones escritas en el df")
+        self._done("step_h2_forecast_projection",
+                   "predicción con el método elegido POR SERIE escrita en el df")
 
 
     def step_h2_total_2026(self) -> dict:
@@ -4646,6 +4784,28 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
             "usd": "USD de renovación (real observado / estimado)"})
         self._log(f"    >> El año {year} cerraría en ${total:,.0f} "
                   f"(${real_usd:,.0f} ya real + ${proj_usd:,.0f} a renovar).")
+        # ---- SEGUIMIENTO del MES EN CURSO (incompleto, solo visual) ----
+        cp = getattr(self, "current_periods", None)
+        if cp:
+            cm = df[pc].astype(str).isin(cp)
+            if cm.any():
+                real_cur = float(df.loc[cm, cfg.renewed_usd_col].sum())
+                cc = df[cm].copy()
+                mk = self._mand_key(cc)
+                rs = cc["step_2_fs_id"].map(self.h2_fs["rate_shrunk"])
+                rmc = mk.map(self.h2_mandatory["rate"])
+                r = rs.fillna(rmc).fillna(0).values
+                au = np.where(cc[cfg.pipeline_units_col] > 0,
+                              cc[cfg.pipeline_usd_col]/cc[cfg.pipeline_units_col], 0)
+                upc = self._uplift_for(cc)
+                upc = upc.values if hasattr(upc, "values") else upc
+                pred_cur = float(np.sum(r * cc[cfg.pipeline_units_col].values * au * upc))
+                pct = 100*real_cur/pred_cur if pred_cur > 0 else 0
+                self._log("")
+                self._log(f"    --- MES EN CURSO {sorted(cp)} (INCOMPLETO — solo seguimiento) ---")
+                self._log(f"      llevamos ${real_cur:,.0f} renovado de ${pred_cur:,.0f} que el "
+                          f"método prevé para el mes completo → {pct:.0f}% del previsto.")
+                self._log(f"      (NO entra en el backtest ni elige método; informativo)")
         self._mark("step_h2_total_2026", metadata={"real": real_usd,
                     "proyectado": proj_usd, "total": total})
         self._done("step_h2_total_2026",
@@ -4722,7 +4882,13 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
             p = min(max(p, 0.0), 1.0)
             # σ relativos de cada factor
             se_bin = np.sqrt(p*(1-p)/n) if n > 0 else 0.5      # binomial de la tasa
-            rel_tasa = max(se_bin/p if p > 0 else 1.0, wape)    # MAX binomial vs método
+            # WAPE del MÉTODO ELEGIDO de ESTA serie (no el global); fallback al global
+            wape_i = wape
+            if getattr(self, "h2_method_by_fs", None) is not None and fs_id in self.h2_method_by_fs.index:
+                wi = self.h2_method_by_fs.loc[fs_id, "wape_serie"]
+                if pd.notna(wi):
+                    wape_i = float(wi)
+            rel_tasa = max(se_bin/p if p > 0 else 1.0, wape_i)  # MAX binomial vs método
             rel_up = uplift_cv                                  # uplift (aprox.)
             auv_vals = d["_auv"][d["_auv"] > 0]
             rel_auv = float(auv_vals.std()/auv_vals.mean()) if len(auv_vals) > 1 and auv_vals.mean() > 0 else 0.0
@@ -4817,8 +4983,7 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         cfg, df = self.cfg, self.df
         pc, rc = cfg.period_col, cfg.dataset_role_col
         pu, ru = cfg.pipeline_units_col, cfg.renewed_units_col
-        pend = pd.Period(str(self.step_metadata
-                  ["step_1_derive_roles_from_period"]["pending_date"])[:7], freq="M")
+        pend = self._target_period()
         y0, y1 = pend.year, pend.year + 1
         d = df[(df["step_1_universe"] == "normal")
                & (df["step_1_forecast_route"] == "trainable")].copy()
@@ -4877,7 +5042,7 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
 
 
     def step_h2_extend_AB(self, term_col="term", term_1y="1Y",
-                          ptype_col="purchase_type", acq_value="Acquisition",
+                          ptype_col="cpf_tr_net_new_v2", acq_value="Acquisition",
                           acq_factor=1.0) -> None:
         """2027 A+B TERM-AWARE (diseño consensuado): solo el tramo 1Y se
         simula — A = renovadas 1Y del mismo mes año anterior (reales+pred);
@@ -4892,8 +5057,7 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
             self._mark("step_h2_extend_AB")
             self._done("step_h2_extend_AB", f"sin columna {term_col}: no aplica")
             return
-        pend = pd.Period(str(self.step_metadata
-                ["step_1_derive_roles_from_period"]["pending_date"])[:7], "M")
+        pend = self._target_period()
         y1 = pend.year + 1
         d = df[(df["step_1_universe"] == "normal")
                & (df["step_1_forecast_route"] == "trainable")].copy()
@@ -4908,14 +5072,15 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         prj = d[es1y & ret & (d[rc] == "projection") & (d[pc].dt.year == pend.year)]
         a_pred = prj.groupby(["_mk", pc])["h2_pred_units_shrunk"].sum()
         A = pd.concat([a_real, a_pred]).groupby(level=[0, 1]).sum()
-        # B: pipeline Acquisition 1Y del año base
+        # B: pipeline Acquisition 1Y del año base (detección por PREFIJO, porque
+        # net_new trae valores como 'Acquisition_Pure-New', 'Acquisition_Not-New')
         if ptype_col in d.columns:
-            acq = d[es1y & (d[ptype_col].astype(str) == acq_value)
-                    & (d[pc].dt.year == pend.year)]
+            es_acq = d[ptype_col].astype(str).str.startswith(acq_value)
+            acq = d[es1y & es_acq & (d[pc].dt.year == pend.year)]
             B = acq.groupby(["_mk", pc])[pu].sum() * acq_factor
         else:
             B = pd.Series(dtype=float)
-            self._log("    ⚠ sin purchase_type: B=0 (solo re-renewals)")
+            self._log(f"    ⚠ sin columna '{ptype_col}': B=0 (solo re-renewals)")
         gl = self.h2_mandatory["ren"].sum()/max(self.h2_mandatory["n"].sum(), 1)
         tasa = self.h2_mandatory["rate"]
         rows = []
@@ -4957,8 +5122,7 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
                       ["step_h2_extend_AB", "step_h2_forecast_projection"])
         cfg, df = self.cfg, self.df
         pc, rc = cfg.period_col, cfg.dataset_role_col
-        pend = pd.Period(str(self.step_metadata
-                ["step_1_derive_roles_from_period"]["pending_date"])[:7], "M")
+        pend = self._target_period()
         y1 = pend.year + 1
         # C1: projection real cuyo mes cae en el año objetivo (multi-año 2Y/3Y)
         pr = df[(df[rc] == "projection") & (df[pc].dt.year == y1)].copy()
@@ -5018,8 +5182,16 @@ class StratifiedForecastHito2(StratifiedForecastHito1):
         v["expl_z"] = v["step_2_fs_id"].map(self.h2_fs["z"])
         v["expl_rate_celda"] = v["_mk"].map(self.h2_mandatory["rate"])
         v["expl_uplift_adj"] = self._uplift_for(v)
+        # método elegido por serie + su WAPE (para Power BI: filtrar/colorear)
+        if getattr(self, "h2_method_by_fs", None) is not None:
+            v["expl_metodo_elegido"] = v["step_2_fs_id"].map(self.h2_method_by_fs["metodo_elegido"])
+            v["expl_wape_serie"] = v["step_2_fs_id"].map(self.h2_method_by_fs["wape_serie"])
+        else:
+            v["expl_metodo_elegido"] = "M3 +dims finas (shrunk)"
+            v["expl_wape_serie"] = np.nan
         keep = ["fu_id", pc, "h2_pred_units_mandatory", "h2_pred_units_shrunk",
-                "expl_z", "expl_rate_celda", "expl_uplift_adj"]
+                "expl_z", "expl_rate_celda", "expl_uplift_adj",
+                "expl_metodo_elegido", "expl_wape_serie"]
         out = base.merge(v[keep], on=["fu_id", pc], how="left")
         out["pred_usd_shrunk"] = (out["h2_pred_units_shrunk"]
                                   * np.where(out[cfg.pipeline_units_col] > 0,
